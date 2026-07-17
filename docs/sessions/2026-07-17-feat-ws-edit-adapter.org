@@ -1,0 +1,82 @@
+:PROPERTIES:
+:ID:       lspbridge-2026-07-17-feat-ws-edit-adapter
+:END:
+#+title: Session 2026-07-17 — lspbridge/feat-ws-edit-adapter (P0.2 WorkspaceEdit→ae adapter)
+#+date: 2026-07-17
+
+* Session State
+:PROPERTIES:
+:LAST_UPDATED: 2026-07-17
+:END:
+** Status
+Landed. =pkg/wsedit= (P0.2) converts an LSP =WorkspaceEdit= into a neutral,
+byte-offset edit =Plan=; ae adapts FROM it. Gate green; merged --ff-only to main
+LOCALLY (no push).
+** Completed
+- [X] Architecture decision: neutral offset-based Plan in lspbridge, ae adapts from it
+- [X] pkg/wsedit: Plan/FileEdit/Edit DTO + FileEdit.Apply (ordering contract)
+- [X] pkg/wsedit: FromWorkspaceEdit + URIToPath + ByteOffset (LSP line/UTF-16→byte)
+- [X] table-driven tests incl. unicode/surrogate cases; 94.8% cov (module TOTAL 91.1%)
+- [X] docs/design/wsedit-ae-seam.org (the seam + dependency-direction rationale)
+** Next Steps
+- [ ] ae-side adapter: consume wsedit.Plan → offset→unified-diff → transaction.Plan
+- [ ] P0.3 socket-activated broker (ADR-0013 pattern)
+
+* Session Topic
+Build the WRITE-path adapter for lspbridge (mgmt f51cf319, P0.2): map an LSP
+=WorkspaceEdit= to an ae-consumable edit plan, deciding dependency direction so
+lspbridge's zero-dependency, CGO_ENABLED=0 invariant is preserved.
+
+* Decisions Made
+- *Neutral representation, ae adapts FROM it* (NOT hard-import ae). ae's
+  =pkg/transaction= is cgo-free and internally light (only depends on
+  stdlib-only =docmutator=), BUT importing it drags mcp-agent-editor's whole
+  go.mod require-graph (smacker/tree-sitter, postgresql-parser, go-sdk, …) into
+  lspbridge's go.sum and bumps its go floor 1.25→1.26.5, destroying the
+  "no external deps" keystone property. So lspbridge owns a neutral byte-offset
+  =Plan=; ae converts offset→unified-diff on its side (where go-difflib already
+  lives). Arrow points heavy→light. Full rationale: docs/design/wsedit-ae-seam.org.
+- ae represents an edit as a *unified diff* (=FileChange.UnifiedDiff=, difflib
+  Context:3), not offset+replacement — reinforces the offset seam (don't make the
+  bridge reproduce difflib framing for the strict =ApplyUnifiedDiff= staleness gate).
+- *Byte-offset addressing*: half-open [Start,End) into original bytes; edits
+  stored DESCENDING by Start so left-to-right apply never invalidates a lower
+  offset; overlaps rejected at construction, re-checked defensively in Apply.
+- *Coordinate conversion*: LSP Position (0-idx line, UTF-16 code-unit char) →
+  UTF-8 byte offset needs file content. Walk to line start (split on \n, \r of
+  \r\n is terminator not text), count UTF-16 units (1 BMP / 2 astral). Clamp:
+  char past line end → line end; mid-surrogate → rune start (never split a rune).
+- Neutral DTO (=plan.go=) imports neither ae nor =pkg/lsp=; only =convert.go=
+  is LSP-aware — a clean seam ae can copy the shape of without pulling pkg/lsp.
+
+* Files Touched
+- pkg/wsedit/plan.go (neutral Plan/FileEdit/Edit + Apply + package/seam doc)
+- pkg/wsedit/convert.go (FromWorkspaceEdit, URIToPath, ByteOffset)
+- pkg/wsedit/wsedit_test.go (table-driven; unicode/surrogate/multi-file/overlap)
+- docs/design/wsedit-ae-seam.org (architecture decision)
+- README.org (roadmap: P0.2 marked done)
+
+* Work Completed
+- Adapter, tests, doc, roadmap update; full gate (lint/vet/vuln/test/cov) green.
+- Verified CGO_ENABLED=0 build ./... and go.mod still zero-dep (no go.sum).
+
+* Glossary
+- WorkspaceEdit :: LSP's map of DocumentURI → []TextEdit; a server computes it
+  purely and never writes.
+- wsedit.Plan :: lspbridge's neutral, multi-file byte-offset edit plan; the seam
+  contract ae adapts from.
+- FileEdit.Apply :: executable statement of the descending-order apply contract.
+- ByteOffset :: LSP (line, UTF-16 char) → UTF-8 byte offset, content-dependent.
+
+* Index
+- architecture decision → [[*Decisions Made]], file:docs/design/wsedit-ae-seam.org
+- coordinate conversion → file:pkg/wsedit/convert.go (ByteOffset)
+- neutral contract → file:pkg/wsedit/plan.go
+
+* Cross-References
+- Parent todo: mgmt f51cf319 (mcp-ast) — P0 keystone
+- Prior session: [[id:lspbridge-2026-07-16-main]]
+- ae write model: file:~/go/src/github.com/davidwalter0/mcp-agent-editor/pkg/transaction/
+- Ecosystem matrix: [[file:~/go/src/github.com/davidwalter0/mcp/docs/ecosystem/design/ecosystem-language-tooling-matrix.org]]
+
+* Footnotes

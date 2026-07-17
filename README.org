@@ -35,7 +35,10 @@ Cargo.toml), which generalizes the C/C++ include-context resolver.
 - [X] P0.2b pyright reference server LIVE: =pkg/server.PyrightSpec=, =pkg/lsp.DiagnosticsCollector=
   (publishDiagnostics), real launch + initialize + didOpen + diagnostics proof against
   pyright 1.1.411 (=npm install -g pyright@1.1.411=)
-- [ ] P0.2 WorkspaceEdit -> ae transaction.Plan adapter
+- [X] P0.2 WorkspaceEdit -> ae adapter (=pkg/wsedit=): neutral byte-offset edit
+  =Plan= (=FromWorkspaceEdit=, URI→path, LSP line/UTF-16-char→UTF-8 byte offset);
+  ae adapts FROM it (offset→unified-diff) so lspbridge stays zero-dep /
+  CGO_ENABLED=0. Seam: =docs/design/wsedit-ae-seam.org=
 - [ ] P0.3 socket-activated broker daemon (ADR-0013 pattern)
 - [ ] P0.3 read/write client roles for mcp-ast / ae
 

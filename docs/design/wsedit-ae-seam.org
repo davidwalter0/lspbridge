@@ -1,0 +1,128 @@
+:PROPERTIES:
+:ID:       lspbridge-wsedit-ae-seam
+:END:
+#+title: lspbridge wsedit → ae write-path seam
+#+date: 2026-07-17
+
+* Session State
+:PROPERTIES:
+:LAST_UPDATED: 2026-07-17
+:END:
+** Status
+Landed. =pkg/wsedit= converts an LSP =WorkspaceEdit= into a neutral byte-offset
+edit =Plan=; ae adapts FROM that Plan on its side. Dependency direction fixed
+heavy→light to preserve lspbridge's zero-external-dependency, CGO_ENABLED=0
+invariant.
+** Completed
+- [X] pkg/wsedit: neutral Plan/FileEdit/Edit DTO + coordinate conversion + tests (94.8% cov)
+** Next Steps
+- [ ] ae side: a small adapter that consumes =wsedit.Plan= (offset→unified-diff→transaction.Plan)
+
+* What this seam is
+The WRITE path of the CQRS semantic tier: an LSP server computes a *pure*
+=WorkspaceEdit= (never touching disk) → =lspbridge/pkg/wsedit= maps it to a
+neutral, byte-offset edit =Plan= → *ae* (mcp-agent-editor) adapts that Plan into
+its own =transaction.Plan= and performs the confirm-gated, atomic apply.
+
+* The architecture decision: dependency direction + CGO purity
+** What ae's write model actually is
+=ae/pkg/transaction= is the plan/apply data model. A =Plan= is
+=TransactionID + Language + Verb + Summary + []FileChange + []VerificationStep=.
+Crucially, a single file change (=FileChange=) is represented as a *unified
+diff* (=UnifiedDiff string=, pmezard/go-difflib framing, =Context:3=), NOT an
+offset+replacement. =transaction.Apply= consumes that diff through a strict,
+staleness-checked =ApplyUnifiedDiff(before, diff)= (validate-all-then-write,
+undo journal, atomic temp+rename), gated by the S-5 deny-list and mutationgate.
+
+** Is transaction a clean cgo-free leaf?
+Measured (2026-07-17):
+- =go list -deps ./pkg/transaction= (non-stdlib) = only
+  =mcp-agent-editor/pkg/docmutator= (itself stdlib-only). No difflib in the
+  *compiled* graph (difflib is used only in transaction's tests), no smacker,
+  no tree-sitter, no CGO. =CGO_ENABLED=0 go build ./pkg/transaction= succeeds.
+
+So the *package* is cgo-free and internally light. The decision does not turn on
+that, though — it turns on the *module* boundary.
+
+** Decision: NEUTRAL representation in lspbridge; ae adapts FROM it
+Reasons, strongest first:
+
+1. *Preserve lspbridge's zero-external-dependency invariant.* lspbridge's
+   go.mod has *no require block and no go.sum* — a deliberate "pure standard
+   library" keystone (README: "Pure standard library, CGO_ENABLED=0"). A single
+   cross-module import of =ae/pkg/transaction= would add mcp-agent-editor as a
+   direct dependency and drag its *entire* go.mod require-graph
+   (postgresql-parser, smacker/go-tree-sitter, mcpkit, go-sdk, goldmark,
+   mvdan.cc/sh, cockroach errors, …) into lspbridge's go.sum. Go compiles only
+   the transitively-imported packages, but the module graph and go.sum balloon
+   regardless — and "no external deps," load-bearing for a bridge every LSP path
+   links against, is gone.
+
+2. *Go-version skew.* lspbridge is =go 1.25=; mcp-agent-editor is =go 1.26.5=.
+   Importing the newer module forces a toolchain floor bump on lspbridge.
+
+3. *Avoid coupling to ae's diff framing.* ae's edit is a unified diff validated
+   strictly by =ApplyUnifiedDiff='s SplitLines-exact staleness checker. For
+   lspbridge to emit =transaction.Plan= directly it would have to *generate*
+   diffs byte-identical to difflib's framing — a brittle coupling that also
+   pulls go-difflib into the "pure stdlib" bridge. An offset-based seam is
+   robust: lspbridge owns the LSP-specific coordinate conversion (the genuinely
+   bug-prone part), ae owns offset→diff on the side where difflib already lives.
+
+4. *Arrow points heavy→light.* ae is the write-executor and already carries a
+   large dependency tree; it is natural for ae to depend on a tiny neutral
+   contract, not for the lightweight bridge to depend on the heavy editor.
+
+This matches the increment's stated "preferred design": lspbridge defines a
+neutral, self-contained edit-plan representation and ae adapts from it.
+
+* The neutral contract (=pkg/wsedit=)
+Pure data, imports neither ae nor even =pkg/lsp=:
+#+begin_src go
+type Edit struct { Start, End int; NewText string } // half-open [Start,End) byte range
+type FileEdit struct { Path string; Edits []Edit }  // Edits sorted DESCENDING by Start
+type Plan struct { Files []FileEdit }               // Files sorted by Path
+func (fe FileEdit) Apply(src []byte) ([]byte, error) // executable ordering contract
+#+end_src
+
+- =Start/End= are byte offsets into the file's *original* bytes. Insertion:
+  =Start==End=. Deletion: =NewText==""=.
+- Edits within a file are stored *descending by Start* so applying them
+  left-to-right never invalidates a later (lower-offset) edit's coordinates.
+  Overlaps are rejected at construction; =Apply= re-checks defensively.
+
+Only =convert.go= is LSP-aware. =FromWorkspaceEdit(we, sources)= performs the two
+LSP translations:
+- *URI → path*: =file://= stripped and percent-decoded (=URIToPath=). Non-file
+  schemes rejected — the write path edits local files only.
+- *(0-idx line, UTF-16 char) → UTF-8 byte offset* (=ByteOffset=): content-
+  dependent, so the caller supplies each document's source bytes. Walk to the
+  line start (split on =\n=; a =\r= of a =\r\n= ending is line-terminator, not
+  text), then advance UTF-16 code units (1 per BMP rune, 2 per rune > U+FFFF)
+  to the target. Clamps: char past line end → line end; a char landing
+  mid-surrogate → the rune's start (offsets never split a rune).
+
+* How ae consumes a Plan (the adapter on ae's side, next increment)
+For each =FileEdit=:
+1. Read the file's current bytes as =before=.
+2. =after, err := fe.Apply(before)= — reproduces the edit by byte offset. A
+   stale snapshot (offsets no longer fit =before=) surfaces here as an
+   out-of-range error.
+3. Diff =before → after= with go-difflib (=Context:3=) into a
+   =transaction.FileChange{Path, Op: modify, UnifiedDiff}=.
+4. Wrap the FileChanges in a =transaction.Plan= and run ae's confirm-gated
+   =Apply= (deny-list + mutationgate + undo journal + atomic write).
+
+*Snapshot contract.* Offsets are bound to the =sources= bytes passed to
+=FromWorkspaceEdit=. ae's =fe.Apply(before)= range-validation plus
+=ApplyUnifiedDiff='s staleness guard both catch a file that changed between
+compute and apply. A content hash on =FileEdit= is a possible future hardening;
+not needed for the offset+diff double-check already in place.
+
+* Verification notes
+- CGO purity re-verified: =CGO_ENABLED=0 go build ./...= succeeds; go.mod still
+  has no require block, no go.sum.
+- Gate green: golangci-lint 0 issues, go vet clean, govulncheck none,
+  =make test= all pass, =pkg/wsedit= coverage 94.8% (module TOTAL 91.1%).
+
+* Footnotes
