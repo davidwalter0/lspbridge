@@ -10,8 +10,9 @@
 :END:
 ** Status
 Greenfield module: P0.1 (transport + lifecycle client + types + ProjectContext
-seam) AND P0.2a (subprocess-launch plumbing) complete, gated GREEN on main
-(876304a, ea2f9b7). Remaining P0.2b (live pyright) needs pyright installed.
+seam), P0.2a (subprocess-launch plumbing), AND P0.2b (live pyright diagnostics
+proof) complete, gated GREEN on main. P0.2b landed 2026-07-17 — see
+[[file:2026-07-17-feat-pyright-live.org]] for that session's detail.
 ** Completed
 - [X] module scaffold (go.mod go1.25, Makefile w/ cov table, LICENSE MIT, README, .gitignore)
 - [X] pkg/jsonrpc — JSON-RPC 2.0 over Content-Length framing: Conn (Call/Notify/
@@ -23,10 +24,10 @@ seam) AND P0.2a (subprocess-launch plumbing) complete, gated GREEN on main
       Shutdown(orderly)/Close(force); cmd/fakelsp helper proves Launch→initialize→didOpen→
       shutdown end-to-end WITHOUT a real server. 83.3% cov.
 - [X] gate (both commits): fmt/build/vet green; golangci-lint 0 issues; govulncheck none; cov 88.8%.
+- [X] P0.2b (2026-07-17) — pyright 1.1.411 installed (npm), pkg/lsp.DiagnosticsCollector +
+      PublishDiagnosticsParams, pkg/server.PyrightSpec preset, LIVE integration test
+      proves real pyright returns a reportAssignmentType diagnostic end-to-end. cov 89.7%.
 ** Next
-- [ ] P0.2b pyright reference server LIVE: install pyright (npm i -g pyright), Launch
-      `pyright-langserver --stdio`, initialize, pull diagnostics on a real .py — the first
-      live proof; also closes Python-semantic. (Blocked on the pyright install decision.)
 - [ ] P0.2 WorkspaceEdit → ae transaction.Plan adapter (write path).
 - [ ] P0.3 socket-activated broker (ADR-0013 pattern): one warm session per Context.Key.
 
@@ -53,9 +54,9 @@ LSP for every language except Go.
 - cmd/fakelsp/main.go (test-only minimal LSP server)
 
 * Next Steps
-- P0.2 pyright end-to-end (launch/initialize/diagnostics) — the keystone's first
-  live proof; also closes the Python-semantic gap.
 - P0.2 WorkspaceEdit→ae Plan adapter; P0.3 broker daemon.
+  (P0.2 pyright end-to-end live proof landed 2026-07-17 —
+  [[file:2026-07-17-feat-pyright-live.org]].)
 
 * Glossary
 - Conn :: the JSON-RPC 2.0 connection (pkg/jsonrpc) over a framed ReadWriteCloser;

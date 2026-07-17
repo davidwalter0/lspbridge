@@ -1,0 +1,102 @@
+:PROPERTIES:
+:ID:       lspbridge-2026-07-17-feat-pyright-live
+:END:
+#+title: Session 2026-07-17 — lspbridge/feat-pyright-live (P0.2b live pyright)
+#+date: 2026-07-17
+
+* Session State
+:PROPERTIES:
+:LAST_UPDATED: 2026-07-17
+:END:
+** Status
+P0.2b complete and gated GREEN: wired the LIVE end-to-end path against real
+pyright 1.1.411. publishDiagnostics support landed in pkg/lsp, a pyright
+Spec preset landed in pkg/server, and a live integration test proves pyright
+returns a real diagnostic over the wire. Merged to main.
+** Completed
+- [X] pkg/lsp/lifecycle.go — TextDocumentClientCapabilities.PublishDiagnostics +
+      PublishDiagnosticsClientCapabilities (advertise publishDiagnostics support).
+- [X] pkg/lsp/diagnostics.go — PublishDiagnosticsParams + DiagnosticsCollector
+      (jsonrpc.Handler that records textDocument/publishDiagnostics per URI,
+      Diagnostics()/Wait() accessors; poll-based Wait, no goroutine leaks).
+- [X] pkg/lsp/diagnostics_test.go — 7 unit tests (record/ignore-other-methods/
+      malformed-params-noop/already-arrived/blocks-until-publish/interim-empty-
+      batch-then-real/context-cancellation).
+- [X] pkg/server/pyright.go — PyrightCommand + PyrightSpec(dir) preset, resolves
+      "pyright-langserver" via exec.LookPath.
+- [X] pkg/server/pyright_live_test.go — TestPyrightLiveDiagnostics: skips if
+      pyright absent; otherwise launches real pyright-langserver, Initialize,
+      DidOpen a definite type error, Wait for publishDiagnostics, assert non-empty.
+- [X] pyright 1.1.411 installed (npm install -g pyright@1.1.411, pinned not
+      latest) — confirmed via `pyright --version` and `pyright-langserver` on PATH.
+- [X] LIVE proof ran and PASSED: pyright reported
+      `Type "Literal['not an int']" is not assignable to declared type "int"`
+      (reportAssignmentType) for `x: int = "not an int"`.
+- [X] gate: build clean; go vet clean; golangci-lint 0 issues; govulncheck none
+      vulnerabilities; make test green (incl. live test, not skipped); cov 89.7%
+      total (pkg/lsp 91.7%, pkg/server 82.4%, pkg/jsonrpc 89.0%, pkg/projectcontext 100%).
+** Next
+- [ ] P0.2 WorkspaceEdit → ae transaction.Plan adapter (write path).
+- [ ] P0.3 socket-activated broker daemon (ADR-0013 pattern).
+
+* Session Topic
+mgmt todo f51cf319, increment P0.2b: prove lspbridge's transport + lifecycle
+client actually drive a real language server (pyright) end-to-end, not just
+the in-repo fakelsp fixture. Closes the last gap before the broker increment.
+
+* Decisions Made
+- Installed pyright via npm, pinned to the exact current-stable version
+  (1.1.411) rather than `latest` — `npm view pyright version` first, then
+  `npm install -g pyright@1.1.411`.
+- DiagnosticsCollector.Wait polls (50ms) for a *non-empty* diagnostics batch
+  rather than returning on the first publishDiagnostics notification: some
+  servers publish an interim empty batch before the real one, and returning
+  too early would make the live test flaky. Poll-based (not goroutine+cond)
+  to avoid a leaked goroutine when the caller's ctx of Wait is never itself
+  canceled.
+- PyrightSpec resolves the binary via exec.LookPath up front so a missing
+  install fails with a clear "executable file not found in $PATH" error
+  rather than a generic Launch failure, and so the live test's skip check
+  (`exec.LookPath(PyrightCommand)`) and the Spec construction share one
+  source of truth for the binary name.
+- Kept the pyright preset inside pkg/server (pyright.go) rather than a new
+  pkg/servers package — one server for now, minimal footprint; revisit if/when
+  tsserver / rust-analyzer presets are added in a later increment.
+- Live test lives in pkg/server (not a new pkg/live) since it only exercises
+  Launch + Client + the lsp.DiagnosticsCollector handler — no new seam needed.
+
+* Files Touched
+- pkg/lsp/lifecycle.go (extended TextDocumentClientCapabilities)
+- pkg/lsp/diagnostics.go (new)
+- pkg/lsp/diagnostics_test.go (new)
+- pkg/server/pyright.go (new)
+- pkg/server/pyright_live_test.go (new)
+- README.org (roadmap: P0.2a/P0.2b split, P0.2b marked done)
+- docs/sessions/2026-07-16-main.org (Status/Completed/Next updated)
+
+* Next Steps
+- P0.2 WorkspaceEdit → ae transaction.Plan adapter.
+- P0.3 socket-activated broker daemon; one warm session per Context.Key,
+  multiplexed to mcp-ast (read) and ae (write) client roles.
+
+* Glossary
+- publishDiagnostics :: the LSP server→client notification
+  (`textDocument/publishDiagnostics`) a server sends, unprompted, whenever a
+  document's diagnostics change; unlike most LSP traffic it has no request ID
+  and arrives on the jsonrpc.Handler notification path.
+- DiagnosticsCollector :: pkg/lsp's jsonrpc.Handler that records the latest
+  publishDiagnostics batch per URI and offers a blocking Wait(ctx, uri).
+- PyrightSpec :: pkg/server's Spec preset for launching
+  `pyright-langserver --stdio`, resolved via PATH.
+
+* Index
+- pyright install/version → [[*Decisions Made]]
+- DiagnosticsCollector design → [[*Decisions Made]], file:pkg/lsp/diagnostics.go
+- live test → file:pkg/server/pyright_live_test.go
+
+* Cross-References
+- Parent todo: mgmt f51cf319 (mcp-ast)
+- Prior session: [[file:2026-07-16-main.org]]
+- Ecosystem matrix: [[file:~/go/src/github.com/davidwalter0/mcp/docs/ecosystem/design/ecosystem-language-tooling-matrix.org]]
+
+* Footnotes

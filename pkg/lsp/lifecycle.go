@@ -38,7 +38,16 @@ type WorkspaceEditClientCapabilities struct {
 
 // TextDocumentClientCapabilities is the document-scoped capability subset.
 type TextDocumentClientCapabilities struct {
-	// Left sparse for P0; per-feature capability structs land here.
+	// PublishDiagnostics advertises support for the server-to-client
+	// textDocument/publishDiagnostics notification. Per-feature capability
+	// structs continue to land here as they're wired in.
+	PublishDiagnostics *PublishDiagnosticsClientCapabilities `json:"publishDiagnostics,omitempty"`
+}
+
+// PublishDiagnosticsClientCapabilities advertises the client's
+// textDocument/publishDiagnostics support.
+type PublishDiagnosticsClientCapabilities struct {
+	RelatedInformation bool `json:"relatedInformation,omitempty"`
 }
 
 // InitializeResult is the server's initialize response. The raw capabilities
