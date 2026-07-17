@@ -1,0 +1,52 @@
+:PROPERTIES:
+:ID:       davidwalter0-lspbridge-readme
+:END:
+#+title: lspbridge — shared LSP client + broker for the CQRS semantic tier
+#+date: 2026-07-16
+
+* What this is
+=lspbridge= is the shared *semantic tier* substrate for the davidwalter0
+polyglot CQRS tooling ([[https://github.com/davidwalter0/mcp-ast][mcp-ast]] = read, [[https://github.com/davidwalter0/mcp-agent-editor][mcp-agent-editor / ae]] = write).
+It provides an out-of-process Language Server Protocol path for every
+language *except Go* — Go keeps its in-process =go/types= + VTA whole-program
+analysis (mcp-ast ADR-0001 rejected gopls delegation).
+
+Two layers (this repo builds them bottom-up):
+
+1. *Client library* — a JSON-RPC 2.0 over stdio transport (=pkg/jsonrpc=)
+   and a minimal LSP lifecycle client (=pkg/lsp=): initialize / didOpen /
+   didChange / shutdown, plus the protocol types (Location, Range,
+   WorkspaceEdit, Diagnostic) that map to the shared =structast= DTO.
+2. *Broker* (later increment) — an ADR-0013-style socket-activated daemon
+   owning one warm LSP session per =(projectRoot, language)=, multiplexed to
+   BOTH mcp-ast (read) and ae (write). Never a merged third server: CQRS
+   stays intact — reads and writes hit the same warm session but through
+   separate client roles.
+
+The per-language project scope is discovered through the =pkg/projectcontext=
+seam (tsconfig.json / pubspec.yaml / compile_commands.json / pyrightconfig /
+Cargo.toml), which generalizes the C/C++ include-context resolver.
+
+* Roadmap (mgmt f51cf319, P0 keystone)
+- [X] P0.1 JSON-RPC 2.0 stdio transport (=pkg/jsonrpc=)
+- [X] P0.1 LSP lifecycle client + minimal types (=pkg/lsp=)
+- [X] P0.1 ProjectContext seam (=pkg/projectcontext=)
+- [ ] P0.2 pyright reference server: launch, initialize, pull diagnostics
+- [ ] P0.2 WorkspaceEdit -> ae transaction.Plan adapter
+- [ ] P0.3 socket-activated broker daemon (ADR-0013 pattern)
+- [ ] P0.3 read/write client roles for mcp-ast / ae
+
+* Design
+Full design: =mcp/docs/ecosystem/design/ecosystem-language-tooling-matrix.org=
+(the P0 keystone row) and the lspbridge design in the fork-program findings
+journal. Reference server for P0 is *pyright* (=pyright-langserver --stdio=):
+cleanest single-server, no framework layering — its proof-of-concept also
+closes the Python-semantic gap.
+
+* Build
+: make build     # compile
+: make test      # unit tests
+: make check     # lint + vet + vuln + test + cov (the check-suite gate)
+: make cov       # per-package coverage table
+
+Pure standard library, =CGO_ENABLED=0=.

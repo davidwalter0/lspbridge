@@ -1,0 +1,66 @@
+:PROPERTIES:
+:ID:       lspbridge-2026-07-16-main
+:END:
+#+title: Session 2026-07-16 — lspbridge/main (P0 keystone bootstrap)
+#+date: 2026-07-16
+
+* Session State
+:PROPERTIES:
+:LAST_UPDATED: 2026-07-16
+:END:
+** Status
+Greenfield module bootstrap. P0.1 (transport + LSP lifecycle client + types +
+ProjectContext seam) complete and gated GREEN. Repo-establishing commit on main.
+** Completed
+- [X] module scaffold (go.mod go1.25, Makefile w/ cov table, LICENSE MIT, README, .gitignore)
+- [X] pkg/jsonrpc — JSON-RPC 2.0 over Content-Length framing: Conn (Call/Notify/
+      handler dispatch/close), ID(number|string), read loop. 88.4% cov.
+- [X] pkg/lsp — minimal protocol types (Location/Range/WorkspaceEdit/Diagnostic) +
+      lifecycle Client (initialize→initialized/didOpen/didChange/shutdown→exit). 75.0% cov.
+- [X] pkg/projectcontext — Context.Key seam, FindUp, MarkerResolver, PythonResolver, Chain. 100% cov.
+- [X] gate: fmt/build/vet green; golangci-lint 0 issues; govulncheck none; cov TOTAL 89.2%.
+** Next
+- [ ] P0.2 pyright reference server: subprocess launch (pyright-langserver --stdio),
+      initialize, pull diagnostics on a real .py — the first live end-to-end proof.
+- [ ] P0.2 WorkspaceEdit → ae transaction.Plan adapter (write path).
+- [ ] P0.3 socket-activated broker (ADR-0013 pattern): one warm session per Context.Key.
+
+* Session Topic
+Open the P0 lspbridge keystone (mgmt f51cf319): the shared LSP client + broker
+substrate for the CQRS semantic tier (mcp-ast read / ae write), out-of-process
+LSP for every language except Go.
+
+* Decisions Made
+- Pure standard library (no external LSP dep): hand-rolled the minimal protocol
+  subset the read/write paths need, keeping the dep graph empty + CGO_ENABLED=0.
+- Whole-document text sync for P0 (incremental deferred until a server needs it).
+- Diagnostic.Code is `any` (LSP allows int OR string code).
+- ProjectContext.Key uses a NUL separator (cannot appear in a path) → no collisions.
+- Bootstrap commit on main: a brand-new repo has no main to branch from; feature
+  increments (P0.2+) follow the worktree convention.
+
+* Files Touched
+- go.mod, Makefile, LICENSE, README.org, .gitignore
+- pkg/jsonrpc/{message,framing,conn}.go + {message,framing,conn}_test.go
+- pkg/lsp/{types,lifecycle,client}.go + {types,client}_test.go
+- pkg/projectcontext/context.go + context_test.go
+
+* Next Steps
+- P0.2 pyright end-to-end (launch/initialize/diagnostics) — the keystone's first
+  live proof; also closes the Python-semantic gap.
+- P0.2 WorkspaceEdit→ae Plan adapter; P0.3 broker daemon.
+
+* Glossary
+- Conn :: the JSON-RPC 2.0 connection (pkg/jsonrpc) over a framed ReadWriteCloser;
+  in production the stdio pipes of an LSP-server subprocess.
+- ProjectContext :: the (root, language, config) tuple keying one warm LSP session;
+  generalizes the C/C++ include-context resolver.
+- P0.1/P0.2/P0.3 :: increments of the f51cf319 keystone — transport (done) →
+  pyright reference + write adapter → socket broker.
+
+* Cross-References
+- Parent todo: mgmt f51cf319 (mcp-ast)
+- Ecosystem matrix: [[file:~/go/src/github.com/davidwalter0/mcp/docs/ecosystem/design/ecosystem-language-tooling-matrix.org]]
+- Program session: [[id:mcp-2026-07-16-main]]
+
+* Footnotes

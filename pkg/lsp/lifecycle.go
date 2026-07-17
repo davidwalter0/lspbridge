@@ -1,0 +1,87 @@
+package lsp
+
+import "encoding/json"
+
+// InitializeParams is the subset of LSP initialize parameters the bridge
+// sends. It is deliberately sparse for the P0 skeleton; capabilities are
+// extended per server as features are wired in.
+type InitializeParams struct {
+	ProcessID    int                `json:"processId"`
+	RootURI      DocumentURI        `json:"rootUri"`
+	Capabilities ClientCapabilities `json:"capabilities"`
+	ClientInfo   *ClientInfo        `json:"clientInfo,omitempty"`
+}
+
+// ClientInfo identifies the client to the server.
+type ClientInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+}
+
+// ClientCapabilities is the advertised client capability set. Kept minimal
+// and honest for P0; grown as concrete features (rename, references,
+// diagnostics pull) are added.
+type ClientCapabilities struct {
+	Workspace    *WorkspaceClientCapabilities    `json:"workspace,omitempty"`
+	TextDocument *TextDocumentClientCapabilities `json:"textDocument,omitempty"`
+}
+
+// WorkspaceClientCapabilities is the workspace-scoped capability subset.
+type WorkspaceClientCapabilities struct {
+	WorkspaceEdit *WorkspaceEditClientCapabilities `json:"workspaceEdit,omitempty"`
+}
+
+// WorkspaceEditClientCapabilities advertises WorkspaceEdit support.
+type WorkspaceEditClientCapabilities struct {
+	DocumentChanges bool `json:"documentChanges,omitempty"`
+}
+
+// TextDocumentClientCapabilities is the document-scoped capability subset.
+type TextDocumentClientCapabilities struct {
+	// Left sparse for P0; per-feature capability structs land here.
+}
+
+// InitializeResult is the server's initialize response. The raw capabilities
+// object is retained verbatim so per-server feature detection can inspect it
+// without this package modeling the whole surface.
+type InitializeResult struct {
+	Capabilities json.RawMessage `json:"capabilities"`
+	ServerInfo   *ServerInfo     `json:"serverInfo,omitempty"`
+}
+
+// ServerInfo identifies the server.
+type ServerInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+}
+
+// TextDocumentItem is a document opened on the server.
+type TextDocumentItem struct {
+	URI        DocumentURI `json:"uri"`
+	LanguageID string      `json:"languageId"`
+	Version    int         `json:"version"`
+	Text       string      `json:"text"`
+}
+
+// DidOpenTextDocumentParams is the textDocument/didOpen payload.
+type DidOpenTextDocumentParams struct {
+	TextDocument TextDocumentItem `json:"textDocument"`
+}
+
+// VersionedTextDocumentIdentifier identifies a document at a version.
+type VersionedTextDocumentIdentifier struct {
+	URI     DocumentURI `json:"uri"`
+	Version int         `json:"version"`
+}
+
+// TextDocumentContentChangeEvent is a full-document content replacement
+// (whole-document sync; the incremental form is added when a server needs it).
+type TextDocumentContentChangeEvent struct {
+	Text string `json:"text"`
+}
+
+// DidChangeTextDocumentParams is the textDocument/didChange payload.
+type DidChangeTextDocumentParams struct {
+	TextDocument   VersionedTextDocumentIdentifier  `json:"textDocument"`
+	ContentChanges []TextDocumentContentChangeEvent `json:"contentChanges"`
+}
