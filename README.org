@@ -31,7 +31,9 @@ Cargo.toml), which generalizes the C/C++ include-context resolver.
 - [X] P0.1 JSON-RPC 2.0 stdio transport (=pkg/jsonrpc=)
 - [X] P0.1 LSP lifecycle client + minimal types (=pkg/lsp=)
 - [X] P0.1 ProjectContext seam (=pkg/projectcontext=)
-- [ ] P0.2 pyright reference server: launch, initialize, pull diagnostics
+- [X] P0.2 subprocess launch plumbing (=pkg/server=) + fake-server integration test
+- [ ] P0.2 pyright reference server: real launch, initialize, pull diagnostics
+  (needs =pyright-langserver= installed — =npm i -g pyright=)
 - [ ] P0.2 WorkspaceEdit -> ae transaction.Plan adapter
 - [ ] P0.3 socket-activated broker daemon (ADR-0013 pattern)
 - [ ] P0.3 read/write client roles for mcp-ast / ae
