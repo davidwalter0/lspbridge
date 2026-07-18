@@ -18,7 +18,7 @@ const RustAnalyzerCommand = "rust-analyzer"
 func RustAnalyzerSpec(dir string) (Spec, error) {
 	path, err := exec.LookPath(RustAnalyzerCommand)
 	if err != nil {
-		return Spec{}, missingBinaryError(RustAnalyzerCommand, err)
+		return Spec{}, missingBinaryError(RustAnalyzerCommand, RustAnalyzerCommand, err)
 	}
 	return Spec{
 		Command: path,

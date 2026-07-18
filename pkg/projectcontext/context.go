@@ -72,6 +72,19 @@ type MarkerResolver struct {
 	// [JavaScriptResolver]). Nil means every matched extension uses Language
 	// unchanged, preserving every existing preset's behavior.
 	LanguageFor func(ext string) string
+
+	// RequireMarker, when true, makes a discoverable marker mandatory: if
+	// none of Markers is found walking up from the file, Resolve reports no
+	// match at all instead of falling back to the file's own directory.
+	// The zero value (false) preserves every prior preset's
+	// fallback-to-own-directory behavior unchanged. This exists for
+	// extensions that are not inherently tied to one language server on
+	// their own — e.g. ".html" is only Angular's template extension inside
+	// an Angular CLI workspace (see [AngularResolver]); an ordinary static
+	// .html file with no angular.json above it is not this resolver's
+	// concern, and must be left unclaimed rather than misrouted to
+	// ngserver with a bogus fallback root.
+	RequireMarker bool
 }
 
 // Resolve implements [Resolver].
@@ -87,6 +100,9 @@ func (r MarkerResolver) Resolve(absPath string) (Context, bool) {
 	start := filepath.Dir(absPath)
 	root, ok := FindUp(start, r.Markers...)
 	if !ok {
+		if r.RequireMarker {
+			return Context{}, false
+		}
 		root = start
 	}
 	cfg := ""
@@ -168,13 +184,68 @@ func RustResolver() MarkerResolver {
 	}
 }
 
+// DartResolver resolves Dart files (.dart) by walking up for pubspec.yaml,
+// the pub package root marker the Dart Analysis Server keys its analysis on
+// (mirrors [RustResolver]'s Cargo.toml / [TypeScriptResolver]'s
+// tsconfig.json). The LSP languageId is "dart" — the identifier the Dart
+// Analysis Server's LSP handler and the wider LSP ecosystem (e.g. the
+// language-identifier table VS Code's Dart extension advertises) use for
+// this extension.
+func DartResolver() MarkerResolver {
+	return MarkerResolver{
+		Language:   "dart",
+		Extensions: []string{".dart"},
+		Markers:    []string{"pubspec.yaml"},
+	}
+}
+
+// AngularResolver resolves Angular template files (.html) by walking up for
+// angular.json, the Angular CLI workspace marker. Unlike every other
+// MarkerResolver preset above, plain ".html" is not inherently tied to one
+// language server: an .html file with no Angular workspace above it is
+// ordinary markup, not an Angular template, so RequireMarker is set —
+// absent a discoverable angular.json, Resolve reports no match at all
+// (rather than falling back to the file's own directory), leaving the file
+// unclaimed by this preset instead of misrouting a plain static HTML file
+// to ngserver.
+//
+// The LSP languageId is "html", not "angular" — verified directly against
+// the installed @angular/language-server v20.0.1's own bundled source
+// (`LanguageId2["HTML"] = "html"`, and its documentSymbol/didOpen handling
+// keys off `params.textDocument.uri.endsWith(".html")`), and independently
+// confirmed by Angular's official Language Service docs
+// (https://angular.dev/tools/language-service) and the lsp-mode Angular
+// client (https://emacs-lsp.github.io/lsp-mode/page/lsp-angular/), both of
+// which register this client for languageIds "ts" / "typescript" / "html".
+// "angular" is not a recognized LSP languageId anywhere in that chain.
+func AngularResolver() MarkerResolver {
+	return MarkerResolver{
+		Language:      "html",
+		Extensions:    []string{".html"},
+		Markers:       []string{"angular.json"},
+		RequireMarker: true,
+	}
+}
+
 // DefaultChain returns the resolver chain for every language lspbridge
 // supports out of the box, tried in this order: Python, TypeScript,
-// JavaScript, Rust. It is the broker's default Config.Resolver. Each
-// resolver claims a disjoint Extensions set, so no file can match more than
-// one — the order only affects readability, not correctness.
+// JavaScript, Rust, Dart, Angular. It is the broker's default
+// Config.Resolver. Each resolver claims a disjoint Extensions set, so no
+// file can match more than one — the order only affects readability, not
+// correctness. AngularResolver is the one exception to "extension implies
+// claim": its RequireMarker means a bare .html file with no angular.json
+// above it is not claimed by anything in this chain (there is no
+// plain-HTML language server preset), which is the intended behavior, not
+// a gap.
 func DefaultChain() Chain {
-	return Chain{PythonResolver(), TypeScriptResolver(), JavaScriptResolver(), RustResolver()}
+	return Chain{
+		PythonResolver(),
+		TypeScriptResolver(),
+		JavaScriptResolver(),
+		RustResolver(),
+		DartResolver(),
+		AngularResolver(),
+	}
 }
 
 // Chain tries each resolver in order and returns the first match.

@@ -274,6 +274,140 @@ func TestRustResolver(t *testing.T) {
 	}
 }
 
+func TestDartResolver(t *testing.T) {
+	root := t.TempDir()
+	cfg := filepath.Join(root, "pubspec.yaml")
+	if err := os.WriteFile(cfg, []byte("name: tinypkg\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	libDir := filepath.Join(root, "lib")
+	if err := os.MkdirAll(libDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(libDir, "main.dart")
+
+	ctx, ok := DartResolver().Resolve(src)
+	if !ok {
+		t.Fatal("resolver did not claim .dart file")
+	}
+	if ctx.Language != "dart" {
+		t.Errorf("language = %q, want dart", ctx.Language)
+	}
+	if ctx.Root != root {
+		t.Errorf("root = %q, want %q", ctx.Root, root)
+	}
+	if ctx.ConfigPath != cfg {
+		t.Errorf("config = %q, want %q", ctx.ConfigPath, cfg)
+	}
+	if _, ok := DartResolver().Resolve("/x/a.py"); ok {
+		t.Error("DartResolver claimed a .py file")
+	}
+}
+
+func TestDartResolverFallsBackToFileDir(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "lone.dart")
+	if err := os.WriteFile(src, []byte("void main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, ok := DartResolver().Resolve(src)
+	if !ok {
+		t.Fatal("expected resolve even with no pubspec.yaml found")
+	}
+	if ctx.Root != dir {
+		t.Errorf("fallback root = %q, want %q", ctx.Root, dir)
+	}
+	if ctx.ConfigPath != "" {
+		t.Errorf("expected empty config, got %q", ctx.ConfigPath)
+	}
+}
+
+// TestAngularResolver exercises both sides of RequireMarker: a .html file
+// under an angular.json workspace is claimed with the workspace root and
+// "html" languageId; a .html file with no angular.json anywhere above it is
+// NOT claimed at all (this is the behavior RequireMarker exists for — see
+// AngularResolver's doc comment).
+func TestAngularResolver(t *testing.T) {
+	root := t.TempDir()
+	cfg := filepath.Join(root, "angular.json")
+	if err := os.WriteFile(cfg, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srcDir := filepath.Join(root, "src", "app")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tmpl := filepath.Join(srcDir, "app.component.html")
+
+	ctx, ok := AngularResolver().Resolve(tmpl)
+	if !ok {
+		t.Fatal("resolver did not claim .html file inside an Angular workspace")
+	}
+	if ctx.Language != "html" {
+		t.Errorf("language = %q, want html", ctx.Language)
+	}
+	if ctx.Root != root {
+		t.Errorf("root = %q, want %q", ctx.Root, root)
+	}
+	if ctx.ConfigPath != cfg {
+		t.Errorf("config = %q, want %q", ctx.ConfigPath, cfg)
+	}
+	if _, ok := AngularResolver().Resolve("/x/a.py"); ok {
+		t.Error("AngularResolver claimed a .py file")
+	}
+}
+
+func TestAngularResolverRejectsPlainHTMLWithNoWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	plain := filepath.Join(dir, "index.html")
+	if err := os.WriteFile(plain, []byte("<html></html>\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ctx, ok := AngularResolver().Resolve(plain); ok {
+		t.Errorf("AngularResolver claimed a plain .html file with no angular.json above it: %+v", ctx)
+	}
+}
+
+// TestMarkerResolverRequireMarker exercises the RequireMarker field
+// directly (independent of AngularResolver), including that the zero value
+// (false) leaves every prior MarkerResolver user's fallback-to-own-dir
+// behavior unchanged — the same shape as TestMarkerResolverLanguageFor.
+func TestMarkerResolverRequireMarker(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "a.foo")
+	if err := os.WriteFile(src, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	required := MarkerResolver{
+		Language:      "foolang",
+		Extensions:    []string{".foo"},
+		Markers:       []string{"foo.marker"},
+		RequireMarker: true,
+	}
+	if ctx, ok := required.Resolve(src); ok {
+		t.Errorf("RequireMarker resolver claimed a file with no marker present: %+v", ctx)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "foo.marker"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, ok := required.Resolve(src)
+	if !ok || ctx.Root != dir {
+		t.Errorf("RequireMarker resolver with marker present: ctx = %+v, ok = %v, want root %q", ctx, ok, dir)
+	}
+
+	notRequired := MarkerResolver{Language: "foolang", Extensions: []string{".foo"}, Markers: []string{"absent.marker"}}
+	otherDir := t.TempDir()
+	otherSrc := filepath.Join(otherDir, "b.foo")
+	if err := os.WriteFile(otherSrc, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, ok = notRequired.Resolve(otherSrc)
+	if !ok || ctx.Root != otherDir {
+		t.Errorf("zero-value RequireMarker: ctx = %+v, ok = %v, want fallback root %q", ctx, ok, otherDir)
+	}
+}
+
 func TestDefaultChain(t *testing.T) {
 	chain := DefaultChain()
 	root := t.TempDir()
@@ -308,7 +442,34 @@ func TestDefaultChain(t *testing.T) {
 		t.Errorf("main.rs: chain resolved %+v ok=%v, want language rust", ctx, ok)
 	}
 
+	// Dart needs its own marker (pubspec.yaml), in yet another root.
+	dartRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dartRoot, "pubspec.yaml"), []byte("name: tinypkg\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, ok = chain.Resolve(filepath.Join(dartRoot, "main.dart"))
+	if !ok || ctx.Language != "dart" {
+		t.Errorf("main.dart: chain resolved %+v ok=%v, want language dart", ctx, ok)
+	}
+
+	// Angular needs angular.json; a .html file resolves once that marker is
+	// present in its own root.
+	ngRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ngRoot, "angular.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, ok = chain.Resolve(filepath.Join(ngRoot, "app.component.html"))
+	if !ok || ctx.Language != "html" {
+		t.Errorf("app.component.html: chain resolved %+v ok=%v, want language html", ctx, ok)
+	}
+
 	if _, ok := chain.Resolve(filepath.Join(root, "a.rb")); ok {
 		t.Error("chain claimed an unhandled extension (.rb)")
+	}
+	// A bare .html file with no angular.json above it must remain unclaimed
+	// by the whole chain — there is no plain-HTML preset, and AngularResolver's
+	// RequireMarker exists precisely to prevent a false match here.
+	if _, ok := chain.Resolve(filepath.Join(root, "plain.html")); ok {
+		t.Error("chain claimed a plain .html file with no Angular workspace above it")
 	}
 }

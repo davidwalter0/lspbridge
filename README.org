@@ -30,10 +30,13 @@ Two layers (this repo builds them bottom-up):
 
 The per-language project scope is discovered through the =pkg/projectcontext=
 seam (tsconfig.json / pubspec.yaml / compile_commands.json / pyrightconfig /
-Cargo.toml), which generalizes the C/C++ include-context resolver. Four
-presets are wired end-to-end today — Python (pyright), TypeScript/JavaScript
-(typescript-language-server), and Rust (rust-analyzer); C/C++/Dart/pubspec
-remain aspirational entries in that list until their own presets land.
+Cargo.toml / angular.json), which generalizes the C/C++ include-context
+resolver. Six presets are wired end-to-end today — Python (pyright),
+TypeScript/JavaScript (typescript-language-server), Rust (rust-analyzer),
+Dart (the Dart Analysis Server, LIVE-proven), and Angular (the Angular
+Language Server — preset + resolver wired, but NOT live-proven; see the
+Roadmap entry below for why); C/C++ remains an aspirational entry until
+clangd's preset lands.
 
 * Roadmap (mgmt f51cf319, P0 keystone)
 - [X] P0.1 JSON-RPC 2.0 stdio transport (=pkg/jsonrpc=)
@@ -78,9 +81,9 @@ remain aspirational entries in that list until their own presets land.
   resolver vary its languageId per extension (nil preserves every prior
   preset's behavior unchanged). =projectcontext.DefaultChain()= composes all
   four (python, typescript, javascript, rust) and is now the broker's default
-  resolver. =server.TypeScriptLanguageServerSpec= (`typescript-language-server
-  --stdio`; one process serves the whole JS/TS family) and
-  =server.RustAnalyzerSpec= (`rust-analyzer`, no flags — LSP-over-stdio is its
+  resolver. =server.TypeScriptLanguageServerSpec= (=typescript-language-server
+  --stdio=; one process serves the whole JS/TS family) and
+  =server.RustAnalyzerSpec= (=rust-analyzer=, no flags — LSP-over-stdio is its
   only mode) join =PyrightSpec= as launch presets; their missing-binary errors
   name the =exttool install --tool NAME --confirm= remediation (exttool is
   this ecosystem's declared non-Go-tool installer) WITHOUT lspbridge
@@ -100,6 +103,71 @@ remain aspirational entries in that list until their own presets land.
   rather than fails if indexing is still cold at the deadline — rust-analyzer's
   cargo metadata/check warm-up is host- and cache-dependent, so a still-empty
   result there is "could not verify in budget," not a defect).
+- [X] Dart + Angular server presets (semantic halves of mgmt
+  mcp-agent-editor c42a63e6 and mcp-ast 266242ac): =projectcontext.DartResolver=
+  (.dart; marker pubspec.yaml; languageId "dart") and
+  =projectcontext.AngularResolver= (.html; marker angular.json; languageId
+  "html" — verified directly against the installed (if incomplete)
+  @angular/language-server v20.0.1's own bundled source, whose internal
+  LanguageId enum names external templates "html", cross-checked against
+  https://angular.dev/tools/language-service and
+  https://emacs-lsp.github.io/lsp-mode/page/lsp-angular/; "angular" is not a
+  recognized LSP languageId anywhere in that chain). AngularResolver is the
+  first =MarkerResolver= preset where the extension alone does not imply a
+  claim — plain ".html" is ordinary markup outside an Angular workspace — so
+  =MarkerResolver= grew a second optional field, =RequireMarker= (alongside
+  the existing =LanguageFor= hook): when true, an unresolved marker walk
+  means "not claimed," not "fall back to the file's own directory," so a
+  plain static .html file is correctly left unclaimed by the whole chain
+  instead of being misrouted to ngserver.
+
+  =server.DartAnalysisServerSpec= (=dart language-server=, plus an explicit
+  --protocol=lsp flag — already the server's own default, but passed
+  explicitly per this package's defensive-explicitness convention; verified
+  live via =dart language-server --help= against Dart SDK 3.12.2) and
+  =server.AngularLanguageServerSpec= (=ngserver --stdio --tsProbeLocations DIR
+  --ngProbeLocations DIR=; both probe-location flags are required by the
+  server and point at the workspace root, which Node's own module-resolution
+  algorithm treats as a search starting point — confirmed by reading the
+  installed server's bundled resolver source) join the existing presets.
+  =broker.DefaultSpecFor= now routes dart → Dart Analysis Server and html →
+  Angular Language Server. =missingBinaryError= (shared by every preset's
+  LookPath failure) grew a second parameter separating the LookPath'd
+  command name from exttool's tool name, because — unlike every preset
+  before it — Angular's resolved binary ("ngserver") and exttool's
+  package-derived tool name ("angular-language-server") are different
+  strings; the remediation message names the latter.
+
+  LIVE proof: a =pkg/server=-level Dart Analysis Server documentSymbol proof
+  over a tiny pubspec.yaml package, run live against Dart SDK 3.12.2 on the
+  development host — =[greet main]= came back in well under a second, no
+  cold-index wait observed (unlike rust-analyzer/tsserver) — though the test
+  still carries this package's generous-timeout / skip-if-still-cold pattern
+  for host independence.
+
+  NO live proof for Angular: @angular/language-server is not available in a
+  working state on the development host. A stray, unrelated global npm
+  install was found (v20.0.1, bin shim dated May 2025 — evidently leftover
+  state from something else, not provisioned for this ecosystem) but it is
+  missing its required @angular/language-service peer (minimum version
+  15.0); invoking it live fails resolving that peer. AngularLanguageServerSpec's
+  args were instead verified by reading that incomplete install's own
+  bundled source directly (its --help usage text and internal LanguageId
+  enum) — a stronger primary source than either secondary doc page, even
+  without a working end-to-end run. Test coverage is a FAKE-SERVER unit
+  test, not a live one: a temp-dir stand-in executable named "ngserver" that
+  does nothing but exit 0 is placed first on PATH so exec.LookPath resolves
+  deterministically, proving the Spec-construction logic (Command/Args/Dir)
+  without any real LSP conversation.
+
+  Remaining per mgmt 266242ac: install a complete, exttool-managed
+  @angular/language-server + peer, a live documentSymbol/diagnostics proof,
+  and the template↔component cross-binding semantics (a property renamed in
+  the .ts component reflected in the .html template) that is the actual
+  point of this preset — resolver + Spec wiring alone doesn't give that yet.
+  Remaining per mgmt c42a63e6: a thin flutter CLI wrapper (build/run/
+  hot-reload/test lifecycle) — an Exec-gated command surface, not LSP, so
+  out of scope for lspbridge itself.
 
 * Design
 Full design: =mcp/docs/ecosystem/design/ecosystem-language-tooling-matrix.org=
@@ -169,7 +237,7 @@ hand-written =pkg/lsp= doc comment flagged.
 
 * Build
 : make build     # compile all (incl. cmd/lspbroker daemon)
-: make test      # unit tests (live pyright/tsserver/rust-analyzer proofs skip when absent)
+: make test      # unit tests (live pyright/tsserver/rust-analyzer/dart proofs skip when absent)
 : make check     # lint + vet + vuln + test + cov (the check-suite gate)
 : make cov       # per-package coverage table
 

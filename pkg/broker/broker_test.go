@@ -272,7 +272,7 @@ func TestDefaultSpecFor(t *testing.T) {
 	// One underlying server binary may be absent on a given host; a LookPath
 	// error is still an "error", so this only logs for the known languages
 	// and asserts distinctly that an unknown language always errors below.
-	for _, lang := range []string{"python", "typescript", "typescriptreact", "javascript", "javascriptreact", "rust"} {
+	for _, lang := range []string{"python", "typescript", "typescriptreact", "javascript", "javascriptreact", "rust", "dart", "html"} {
 		if _, err := DefaultSpecFor(projectcontext.Context{Language: lang, Root: "/p"}); err != nil {
 			t.Logf("%s spec (server maybe absent): %v", lang, err)
 		}

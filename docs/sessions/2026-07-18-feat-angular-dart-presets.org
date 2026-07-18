@@ -1,0 +1,217 @@
+:PROPERTIES:
+:ID:       lspbridge-2026-07-18-feat-angular-dart-presets
+:END:
+#+title: Session 2026-07-18 — lspbridge/feat-angular-dart-presets (Dart + Angular presets)
+#+date: 2026-07-18
+
+* Session State
+:PROPERTIES:
+:LAST_UPDATED: 2026-07-18
+:END:
+** Status
+Landed. Dart Analysis Server preset done end-to-end with a LIVE proof
+(dart 3.12.2 installed and working); Angular Language Server preset done as
+resolver + Spec wiring only, honestly NOT live-proven (the one
+@angular/language-server install found on this host is incomplete — missing
+its @angular/language-service peer). Gate GREEN (lint 0, vet clean, vuln
+clean, test all green, cov TOTAL 92.4%), zero-dep invariant reverified (no
+go.sum).
+** Completed
+- [X] =MarkerResolver= gained a second optional field, =RequireMarker=
+      (alongside the existing =LanguageFor=): when true, no discoverable
+      marker means "not claimed," not "fall back to file's own dir"
+- [X] =DartResolver()= (.dart; pubspec.yaml; languageId "dart")
+- [X] =AngularResolver()= (.html; angular.json; languageId "html",
+      RequireMarker=true so a plain .html file with no Angular workspace is
+      correctly left unclaimed by the whole chain)
+- [X] =DefaultChain()= extended to python + typescript + javascript + rust +
+      dart + angular
+- [X] =server.DartAnalysisServerSpec= (=dart language-server --protocol=lsp=)
+- [X] =server.AngularLanguageServerSpec= (=ngserver --stdio --tsProbeLocations
+      DIR --ngProbeLocations DIR=)
+- [X] =missingBinaryError= generalized to a (cmd, exttoolName, err) signature
+      — Angular's resolved binary ("ngserver") and exttool's tool name
+      ("angular-language-server") differ, unlike every prior preset; the two
+      existing call sites (tsserver.go, rustanalyzer.go) updated to pass the
+      same string twice, preserving their existing error text byte-for-byte
+- [X] =broker.DefaultSpecFor= routes dart → Dart Analysis Server, html →
+      Angular Language Server
+- [X] LIVE: =pkg/server= Dart Analysis Server documentSymbol proof
+      (=[greet main]=, 0.15s, no cold-index wait)
+- [X] FAKE-SERVER (honestly labeled, not live): =pkg/server= Angular Spec
+      construction test — a temp-dir stand-in "ngserver" executable proves
+      LookPath resolution + Args/Dir assembly without any real LSP
+      conversation
+- [X] Full gate: lint 0 issues, vet clean, govulncheck clean, all tests
+      green, cov TOTAL 92.4% (projectcontext 100%, server 88.2%, broker
+      93.1%)
+- [X] Zero-dep invariant reverified: no go.sum, =go list -deps= shows only
+      stdlib (incl. GOROOT-internal vendor/crypto paths, not real deps)
+- [X] README.org updated: project-scope paragraph (six presets), new
+      Roadmap bullet, =make test= comment
+- [X] mgmt 266242ac (mcp-ast) updated: context appended noting the lspbridge
+      preset side is done; remaining = install + live proof + template↔component
+      verification
+- [X] mgmt c42a63e6 (mcp-agent-editor) updated: context appended noting the
+      semantic-Dart preset is done with a live result; remaining = flutter
+      CLI wrapper
+** Next Steps
+- [ ] Angular: install a COMPLETE, exttool-managed @angular/language-server +
+      @angular/language-service peer, then a real live documentSymbol/
+      diagnostics proof — this session could not do this (see Decisions Made)
+- [ ] Angular: template↔component cross-binding semantics (property renamed
+      in .ts reflected in .html) — the actual point of mgmt 266242ac; resolver
+      + Spec wiring alone doesn't give this yet
+- [ ] Dart: flutter CLI wrapper (build/run/hot-reload/test) — an Exec-gated
+      command surface, not LSP, out of scope for lspbridge itself (mgmt
+      c42a63e6 remaining item)
+- [ ] ae/mcp-ast consumer-side wiring for the two new languageIds (dart,
+      html) — this session only lands the lspbridge-side preset, per the
+      established CQRS split
+
+* Session Topic
+Add the semantic halves (lspbridge presets) of mgmt 266242ac (Angular
+Language Service) and c42a63e6 (Dart Analysis Server), following the exact
+pattern =pkg/server/tsserver.go= + =rustanalyzer.go= + the
+=pkg/projectcontext= resolvers + broker =DefaultSpecFor= wiring established
+in f154f7e. Root module stays zero-dependency throughout (no go.sum).
+
+* Decisions Made
+- *=RequireMarker= as a new =MarkerResolver= field, not a new resolver type.*
+  Every prior MarkerResolver-based preset (Python/TS/JS/Rust) is correctly
+  claimed by extension alone — a .py file is Python whether or not
+  pyrightconfig.json exists anywhere above it. Angular's ".html" breaks that
+  assumption: plain HTML is not inherently Angular. Reusing the existing
+  optional-field extension pattern (the precedent =LanguageFor= set) keeps
+  the FindUp/marker-walk logic in one place and leaves every existing
+  preset's behavior byte-for-byte unchanged (RequireMarker's zero value is
+  false).
+- *Angular languageId is "html", not "angular" — verified against the
+  installed server's own source, not just docs.* The task flagged this as
+  ambiguous. WebFetch of https://angular.dev/tools/language-service and
+  https://emacs-lsp.github.io/lsp-mode/page/lsp-angular/ both pointed at
+  "html"/"typescript"/"ts", but the strongest evidence was grepping the
+  actual installed (if incomplete) @angular/language-server v20.0.1 source
+  on this host: its internal LanguageId enum defines exactly two values,
+  TS="typescript" and HTML="html", and its didOpen/documentSymbol handling
+  keys off `params.textDocument.uri.endsWith(".html")`. "angular" appears
+  nowhere as an LSP languageId in that chain.
+- *Angular probe-location args point at the workspace root (dir), not
+  dir/node_modules.* Verified two ways: (1) reading the installed server's
+  bundled resolver — it calls Node's `require.resolve(pkg, {paths:
+  [location]})`, and Node's own semantics treat each path as a *starting
+  point* for an upward node_modules walk, not a literal node_modules
+  directory; (2) a live probe on this host: passing the literal
+  ~/.npm-global/lib/node_modules directory as --tsProbeLocations resolved
+  typescript successfully (via the upward-walk landing on its parent's
+  node_modules), confirming the mechanism empirically, not just by reading
+  code.
+- *Discovered but did NOT use a stray Angular Language Server install.*
+  `which ngserver` resolved to ~/.npm-global/bin/ngserver (a real symlink to
+  a real @angular/language-server v20.0.1 install, bin dated May 2025) —
+  contradicting the task's premise that it's "not installed." Investigated
+  rather than trusting either the premise or the surprise finding blindly:
+  actually running it (with correct --tsProbeLocations/--ngProbeLocations)
+  fails with `Error: Failed to resolve '@angular/language-service' with
+  minimum version '15.0'` — that peer package is genuinely absent, and the
+  install's age/location suggest unrelated leftover state rather than
+  something provisioned for this ecosystem. Conclusion: honor the task's "no
+  live test" framing (this install can't produce one anyway) rather than
+  quietly expanding scope to install the missing peer, which the task didn't
+  ask for. Reported the finding transparently instead of silently ignoring
+  it or silently treating it as "installed."
+- *Generalized =missingBinaryError= to (cmd, exttoolName, err) rather than
+  duplicating the error-format string in angular.go.* Angular is the first
+  preset where the LookPath'd binary name ("ngserver") and exttool's
+  package-derived tool name ("angular-language-server") differ. A DRY
+  two-parameter helper (defaulting to "pass cmd for both" for every
+  pre-existing preset) was lower-risk than forking the format string, and
+  the two existing call sites were updated and reverified against their
+  existing tests (byte-identical error text).
+- *Dart's live test needed no fixture iteration.* Unlike rust-analyzer (up
+  to 90s cold-index wait budgeted), the Dart Analysis Server answered
+  documentSymbol for a tiny pubspec.yaml package in 0.15s with no visible
+  warm-up delay. The generous-timeout/honest-skip pattern is implemented
+  anyway (matching the task's explicit caution and this package's
+  established convention for the other two "live-with-indexing" servers),
+  but it never triggered on this host.
+- *No pyright.go retrofit.* Same call as the prior session: out of scope,
+  keeps the diff minimal.
+
+* Files Touched
+- pkg/projectcontext/context.go (RequireMarker field; DartResolver,
+  AngularResolver; DefaultChain extended)
+- pkg/projectcontext/context_test.go (RequireMarker unit test; Dart +
+  Angular resolver tests incl. the plain-.html-rejected negative case;
+  DefaultChain extended)
+- pkg/server/dartanalyzer.go (new: DartCommand/DartAnalysisServerSpec)
+- pkg/server/dartanalyzer_test.go (new: missing-binary + found-shape unit
+  tests)
+- pkg/server/dartanalyzer_live_test.go (new: LIVE Dart Analysis Server
+  documentSymbol proof)
+- pkg/server/angular.go (new: AngularLanguageServerCommand/
+  AngularLanguageServerSpec)
+- pkg/server/angular_test.go (new: missing-binary test + FAKE-SERVER
+  Spec-construction test, honestly labeled as non-live)
+- pkg/server/exttool.go (missingBinaryError signature generalized:
+  (cmd, exttoolName, err))
+- pkg/server/tsserver.go, pkg/server/rustanalyzer.go (call-site updates for
+  the new missingBinaryError signature; behavior/error text unchanged)
+- pkg/broker/broker.go (DefaultSpecFor routes dart, html)
+- pkg/broker/broker_test.go (TestDefaultSpecFor extended to dart, html)
+- README.org (project-scope paragraph; new Roadmap bullet; make test
+  comment)
+- docs/sessions/2026-07-18-feat-angular-dart-presets.org (this file)
+
+* Work Completed
+- Full gate green: build, vet, golangci-lint 0 issues, govulncheck none,
+  tests all green (only pyright/tsserver/rust-analyzer/dart live tests ran —
+  all installed on this host; Angular has no live test by design), cov
+  TOTAL 92.4%.
+- Zero-dependency invariant reverified: no go.sum on disk; =go list -deps=
+  over the whole module shows only stdlib (the two dotted-looking hits,
+  vendor/golang.org/x/net/dns/dnsmessage and crypto/internal/entropy/v1.0.0,
+  are GOROOT-internal, not external module dependencies); go.mod unchanged
+  (still just module + go directive, no require block).
+- Worktree gated twice (once mid-session after implementation, once after
+  merge to main) then merged --ff-only to main locally (no push — per task
+  instruction).
+
+* LIVE proof outputs
+- pkg/server Dart Analysis Server documentSymbol → =[greet main]=
+  (hierarchical=2, flat=0), 0.15s, dart 3.12.2
+- Angular: NO live proof — see Decisions Made for the incomplete-install
+  finding and why this session did not attempt to complete it
+
+* Glossary
+- RequireMarker :: MarkerResolver's optional field making a discoverable
+  marker mandatory; when true, Resolve reports no match at all instead of
+  falling back to the file's own directory
+- probe location :: an Angular Language Server CLI arg (--tsProbeLocations /
+  --ngProbeLocations) naming a directory Node's require.resolve treats as an
+  upward-search starting point for a required peer package
+- ngserver :: the Angular Language Server's installed binary name (npm
+  package @angular/language-server); differs from exttool's tool-name slug
+  "angular-language-server"
+- pub package :: a Dart/Flutter package rooted at pubspec.yaml; the marker
+  DartResolver walks up for
+
+* Index
+- resolver presets → file:pkg/projectcontext/context.go
+- Dart launch spec → file:pkg/server/dartanalyzer.go
+- Angular launch spec → file:pkg/server/angular.go
+- generalized missing-binary error → file:pkg/server/exttool.go
+- broker wiring → file:pkg/broker/broker.go
+- Dart live proof → file:pkg/server/dartanalyzer_live_test.go
+- Angular fake-server unit test → file:pkg/server/angular_test.go
+
+* Cross-References
+- Semantic half of: mgmt c42a63e6 (mcp-agent-editor) — Dart Analysis Server
+  via lspbridge
+- Semantic half of: mgmt 266242ac (mcp-ast) — Angular Language Service via
+  lspbridge
+- Prior session (established the exact pattern this one follows):
+  [[id:lspbridge-2026-07-18-feat-server-presets]]
+- Ecosystem design doc: [[file:~/go/src/github.com/davidwalter0/mcp/docs/ecosystem/design/ecosystem-language-tooling-matrix.org]]
+
+* Footnotes

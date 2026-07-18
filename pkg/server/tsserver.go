@@ -31,7 +31,7 @@ const TypeScriptLanguageServerCommand = "typescript-language-server"
 func TypeScriptLanguageServerSpec(dir string) (Spec, error) {
 	path, err := exec.LookPath(TypeScriptLanguageServerCommand)
 	if err != nil {
-		return Spec{}, missingBinaryError(TypeScriptLanguageServerCommand, err)
+		return Spec{}, missingBinaryError(TypeScriptLanguageServerCommand, TypeScriptLanguageServerCommand, err)
 	}
 	return Spec{
 		Command: path,

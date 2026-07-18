@@ -40,8 +40,13 @@ type SpecFunc func(pc projectcontext.Context) (server.Spec, error)
 // supports out of the box: python → pyright; typescript / typescriptreact /
 // javascript / javascriptreact → typescript-language-server (one process
 // serves the whole JS/TS family — see [server.TypeScriptLanguageServerSpec]);
-// rust → rust-analyzer. Unknown languages are an error (the broker cannot
-// activate a session it has no server for).
+// rust → rust-analyzer; dart → the Dart Analysis Server (see
+// [server.DartAnalysisServerSpec]); html → the Angular Language Server (see
+// [server.AngularLanguageServerSpec]) — this "html" case is specifically
+// [projectcontext.AngularResolver]'s Angular-workspace-scoped languageId
+// (angular.json required upward), not a general-purpose plain-HTML case;
+// there is no plain-HTML server preset. Unknown languages are an error (the
+// broker cannot activate a session it has no server for).
 func DefaultSpecFor(pc projectcontext.Context) (server.Spec, error) {
 	switch pc.Language {
 	case "python":
@@ -50,6 +55,10 @@ func DefaultSpecFor(pc projectcontext.Context) (server.Spec, error) {
 		return server.TypeScriptLanguageServerSpec(pc.Root)
 	case "rust":
 		return server.RustAnalyzerSpec(pc.Root)
+	case "dart":
+		return server.DartAnalysisServerSpec(pc.Root)
+	case "html":
+		return server.AngularLanguageServerSpec(pc.Root)
 	default:
 		return server.Spec{}, fmt.Errorf("broker: no language server configured for %q", pc.Language)
 	}
