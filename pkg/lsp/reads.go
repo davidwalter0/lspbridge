@@ -7,8 +7,9 @@ import (
 )
 
 // This file adds the READ surface the broker multiplexes to mcp-ast:
-// documentSymbol, references, definition, hover — plus rename, the first LSP
-// method that produces a [WorkspaceEdit] and so feeds the wsedit WRITE path.
+// documentSymbol, references, definition, hover, foldingRange — plus rename,
+// the first LSP method that produces a [WorkspaceEdit] and so feeds the
+// wsedit WRITE path.
 //
 // All positions are LSP positions: 0-indexed lines, and characters measured in
 // UTF-16 code units (see [Position]). Callers that speak the structast DTO
@@ -22,6 +23,7 @@ const (
 	definitionMethod     = "textDocument/definition"
 	hoverMethod          = "textDocument/hover"
 	renameMethod         = "textDocument/rename"
+	foldingRangeMethod   = "textDocument/foldingRange"
 )
 
 // TextDocumentIdentifier names a document by URI.
@@ -373,6 +375,55 @@ func (c *Client) Rename(ctx context.Context, params RenameParams) (*WorkspaceEdi
 		return nil, err
 	}
 	return &we, nil
+}
+
+// FoldingRangeParams is the textDocument/foldingRange request payload.
+type FoldingRangeParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+}
+
+// FoldingRangeKind categorizes a [FoldingRange] (e.g. so a client's "fold all
+// comments" command can select just that kind). Per the LSP spec it is an
+// open string enumeration — [FoldingRangeKindComment], [FoldingRangeKindImports]
+// and [FoldingRangeKindRegion] are the standardized values (LSP 3.18
+// metaModel, FoldingRangeKind), but a server may report others.
+type FoldingRangeKind string
+
+// Standardized folding range kinds.
+const (
+	FoldingRangeKindComment FoldingRangeKind = "comment"
+	FoldingRangeKindImports FoldingRangeKind = "imports"
+	FoldingRangeKindRegion  FoldingRangeKind = "region"
+)
+
+// FoldingRange is one foldable line span. StartCharacter/EndCharacter are
+// pointers because the LSP spec gives the unset case its own meaning
+// ("defaults to the length of the start/end line") distinct from character 0;
+// a server that folds whole lines (as org-lsp does) leaves both nil.
+type FoldingRange struct {
+	StartLine      int              `json:"startLine"`
+	StartCharacter *int             `json:"startCharacter,omitempty"`
+	EndLine        int              `json:"endLine"`
+	EndCharacter   *int             `json:"endCharacter,omitempty"`
+	Kind           FoldingRangeKind `json:"kind,omitempty"`
+	CollapsedText  string           `json:"collapsedText,omitempty"`
+}
+
+// FoldingRange requests the foldable line ranges for a document. A null
+// result yields a nil slice and a nil error.
+func (c *Client) FoldingRange(ctx context.Context, params FoldingRangeParams) ([]FoldingRange, error) {
+	var raw json.RawMessage
+	if err := c.conn.Call(ctx, foldingRangeMethod, params, &raw); err != nil {
+		return nil, err
+	}
+	if isJSONNull(raw) {
+		return nil, nil
+	}
+	var ranges []FoldingRange
+	if err := json.Unmarshal(raw, &ranges); err != nil {
+		return nil, err
+	}
+	return ranges, nil
 }
 
 // isJSONNull reports whether raw is absent or the JSON null literal.

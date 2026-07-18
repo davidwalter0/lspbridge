@@ -1,0 +1,36 @@
+:PROPERTIES:
+:ID:       org-lsp-fixture-2026-07-18
+:END:
+#+title: Session 2026-07-18 — org-lsp fixture
+#+date: 2026-07-18
+
+* Session State
+:PROPERTIES:
+:LAST_UPDATED: 2026-07-18
+:END:
+
+** Status
+Landed.
+
+** Completed
+- [X] pkg/orglsp scaffolding
+- [ ] workspace/symbol caching
+
+* Design Notes
+Some prose about the design.
+
+** Implementation
+#+begin_src go
+func main() {
+	println("org-lsp")
+}
+#+end_src
+
+** Secrets                                                            :crypt:
+This body must never surface in a symbol name or detail.
+
+*** Nested under secrets
+This heading and its body must never surface either.
+
+* Footnotes
+[fn:1] a footnote.

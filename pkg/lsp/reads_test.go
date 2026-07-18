@@ -285,6 +285,35 @@ func TestWorkspaceEditSkipsResourceOps(t *testing.T) {
 	}
 }
 
+func TestFoldingRange(t *testing.T) {
+	const body = `[{"startLine":0,"endLine":9,"kind":"region"},{"startLine":2,"endLine":4}]`
+	client := newClientCanned(t, map[string]string{foldingRangeMethod: body})
+	ranges, err := client.FoldingRange(testCtx(t), FoldingRangeParams{TextDocument: TextDocumentIdentifier{URI: "file:///a.org"}})
+	if err != nil {
+		t.Fatalf("FoldingRange: %v", err)
+	}
+	if len(ranges) != 2 {
+		t.Fatalf("want 2 ranges, got %d: %+v", len(ranges), ranges)
+	}
+	if ranges[0].StartLine != 0 || ranges[0].EndLine != 9 || ranges[0].Kind != FoldingRangeKindRegion {
+		t.Errorf("ranges[0] = %+v", ranges[0])
+	}
+	if ranges[1].Kind != "" {
+		t.Errorf("ranges[1].Kind = %q, want empty", ranges[1].Kind)
+	}
+}
+
+func TestFoldingRangeNull(t *testing.T) {
+	client := newClientCanned(t, map[string]string{foldingRangeMethod: `null`})
+	ranges, err := client.FoldingRange(testCtx(t), FoldingRangeParams{})
+	if err != nil {
+		t.Fatalf("FoldingRange: %v", err)
+	}
+	if ranges != nil {
+		t.Fatalf("want nil, got %+v", ranges)
+	}
+}
+
 func TestReadMethodsMalformed(t *testing.T) {
 	// Each body is valid JSON that fails to decode into the method's result
 	// type, exercising the error-return branches.
@@ -329,6 +358,12 @@ func TestReadMethodsMalformed(t *testing.T) {
 			if _, err := c.Rename(testCtx(t), RenameParams{}); err == nil {
 				t.Errorf("Rename(%s) = nil error, want error", body)
 			}
+		}
+	})
+	t.Run("foldingRange", func(t *testing.T) {
+		c := newClientCanned(t, map[string]string{foldingRangeMethod: `42`})
+		if _, err := c.FoldingRange(testCtx(t), FoldingRangeParams{}); err == nil {
+			t.Error("FoldingRange(42) = nil error, want error")
 		}
 	})
 }

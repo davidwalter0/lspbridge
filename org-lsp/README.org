@@ -1,0 +1,141 @@
+:PROPERTIES:
+:ID:       davidwalter0-lspbridge-org-lsp-readme
+:END:
+#+title: org-lsp — a pure-Go, Emacs-free org-mode LSP server
+#+date: 2026-07-18
+
+* What this is
+=org-lsp= is a standalone Language Server Protocol server for org-mode text
+documents, with *no Emacs and no elisp anywhere in its runtime path*. It
+speaks LSP over stdio, the same shape as ~pyright-langserver --stdio~: point
+any LSP-capable editor (VS Code, Neovim, Zed, Emacs's own eglot/lsp-mode) at
+it for org-mode buffers.
+
+It exists because [[https://github.com/davidwalter0/org][orgast]] (the parse engine) is not, and was never meant to
+be, API-compatible with LSP — orgast is a typed AST projection library;
+turning that into a server that answers =textDocument/documentSymbol= etc.
+over JSON-RPC is exactly the thin adapter this module is. Implements mgmt
+6131a2a1.
+
+* Home: a nested module, not a new package in lspbridge's =pkg/=
+lspbridge's root module is deliberately zero-dependency (no =go.sum=, see the
+root README) — that invariant has been reaffirmed across several sessions and
+is load-bearing for how the broker daemon ships. org-lsp needs
+=github.com/davidwalter0/org= (the orgast engine), so it CANNOT live in
+lspbridge's own =pkg/=, nor even in a =cmd/= under the root module — Go does
+not scope dependencies by directory within a single module; anything anywhere
+under the root module's tree that imports orgast would put orgast (and its
+transitive deps: niklasfasching/go-org, golang.org/x/net) into the ROOT
+=go.mod=/=go.sum=, breaking the invariant for every consumer of lspbridge's
+=pkg/jsonrpc= and =pkg/lsp=, not just org-lsp.
+
+The fix is a Go multi-module repo: this directory is a SEPARATE module,
+=github.com/davidwalter0/lspbridge/org-lsp=, with its own =go.mod=/=go.sum=. A
+subdirectory that declares its own =go.mod= is invisible to the parent
+module's build (=go build ./...= at the repo root does not descend into it),
+so the root stays exactly as zero-dep as it was before this module existed —
+verified as part of landing this task (root =go.sum= still does not exist;
+=make check= at the repo root is unaffected).
+
+The one wrinkle: org-lsp also needs lspbridge's OWN =pkg/jsonrpc= (the
+Conn/Handler substrate) and =pkg/lsp= (the wire types). Root lspbridge has no
+git remote and no tag (verified: ~git remote -v~ is empty) — it cannot be
+~go get~-fetched by anything outside this working tree. So this module's
+=go.mod= pulls it in with a *relative replace directive*:
+#+begin_src text
+require github.com/davidwalter0/lspbridge v0.0.0-00010101000000-000000000000
+replace github.com/davidwalter0/lspbridge => ../
+#+end_src
+This is a well-established local pattern in this GOPATH, not a one-off hack —
+=go-autocfg/vaultsource= uses the identical shape (nested module, replace
+=> ../=, placeholder pseudo-version) for the same reason (a dependency on its
+own unpublished parent module). The tradeoff: this only resolves for a
+checkout that has both directories side by side (i.e. this working tree) —
+if lspbridge is ever published (a remote + a tag), the replace directive can
+be dropped in favor of a real =require lspbridge vX.Y.Z=, and nothing else
+about org-lsp's code needs to change.
+
+=github.com/davidwalter0/org v0.1.0=, in contrast, IS published (tagged, with
+a real git remote) and was already resolvable from the local module cache
+with =GOPROXY=off= at the time this was built — so requiring it directly
+(no replace) was possible and is what this module does.
+
+* v1 capabilities
+Advertised honestly in =initialize='s result — nothing here that isn't
+actually implemented:
+- =textDocumentSync= = Full (1): whole-document =didOpen=/=didChange=, an
+  in-memory buffer map ([[file:pkg/orglsp/buffers.go][pkg/orglsp/buffers.go]]).
+- =documentSymbolProvider=: a nested [[file:pkg/orglsp/symbols.go][DocumentSymbol]] tree — one entry per
+  heading, nested by outline level, with each heading's own SRC blocks
+  attached as lightweight leaf children (named =src:<lang>=).
+- =foldingRangeProvider=: one [[file:pkg/orglsp/folding.go][fold]] per heading subtree, per closed
+  =#+begin_=/=#+end_= block, and per =:NAME:=/=:END:= drawer.
+- =workspaceSymbolProvider=: a lazy [[file:pkg/orglsp/workspace.go][scan]] of the initialize root for
+  =*.org= files (hidden directories skipped), matching a case-insensitive
+  substring of the query against heading titles; cached per file by mtime.
+- =textDocument/publishDiagnostics=, sent after =didOpen=/=didChange=: "org-
+  lint-lite" ([[file:pkg/orglsp/diagnostics.go][pkg/orglsp/diagnostics.go]]) — broken =[[file:...]]= links (resolved
+  relative to the document) and unclosed =#+begin_= blocks. Nothing heavier.
+
+** Why orgast has no positions, and what org-lsp does about it
+orgast wraps niklasfasching/go-org v1.9.1, which was built for rendering
+(HTML/plain-org export) and carries *no source position of any kind* on its
+AST — no byte offset, no line number, not even on a Headline. LSP is
+fundamentally position-based. [[file:pkg/orglsp/lineindex.go][pkg/orglsp/lineindex.go]] is the position oracle
+that closes this gap: it re-scans the raw text with small line-oriented
+regexes for the same syntactic tokens go-org's own lexer recognizes
+(headings, =#+begin_=/=#+end_= pairs, =:NAME:=/=:END:= drawers), then *aligns*
+that scan against orgast's already crypt/PGP-filtered semantic lists by
+walking both in document order and matching on (level, text-containment)
+rather than by raw index. orgast still owns every semantic fact (title,
+tags, properties, language, crypt/PGP filtering); this file only ever adds
+positions on top, and never has to understand :crypt: or PGP-armor itself —
+see the extended rationale in that file's doc comment.
+
+** Crypt-awareness
+org-lsp never descends into a =:crypt:=-tagged subtree, at any layer: orgast's
+own =Headings=/=SrcBlocks= already exclude everything below a crypt heading
+(the heading itself is still reported, as an opaque leaf), and the line-
+index alignment above never needs to special-case crypt itself — it just
+naturally steps over the corresponding raw lines. =TestDocumentSymbolsGoldenTree=
+asserts this end to end: a heading nested under a =:crypt:= heading in the
+test fixture never appears anywhere in the returned tree, and no symbol name
+or detail ever contains the encrypted body's text. Folding ranges are the
+one deliberate exception — a crypt heading still gets a folding range,
+because a line span reveals no content (see [[file:pkg/orglsp/folding.go][folding.go]]'s doc comment).
+
+* Non-goals (strata boundary)
+No babel execution, no agenda, no table-formula evaluation. Those are org
+*behavior*, not org *syntax* — [[https://orgmode.org/worg/org-syntax.html][orgmode.org/worg/org-syntax.html]] is this
+project's syntax reference and explicitly scopes itself to syntax, not
+behavior; elisp is the only faithful spec for behavior. A future consumer
+that genuinely needs babel/agenda semantics should shell out to a real Emacs
+batch process (~emacs --batch -l org~ / =emacsclient=) behind its own Spec,
+not have org-lsp grow an elisp interpreter. This boundary is stated here, in
+the =cmd/org-lsp= package doc, and in the advertised capabilities (no
+=executeCommandProvider=, no babel-shaped custom method).
+
+Also deliberately deferred, and honestly not done:
+- Column-precise =selectionRange= for headings: v1 selects the *whole
+  heading line* rather than just the title's character span, since orgast
+  doesn't expose the title's byte offset within the line. A real
+  simplification, not a bug — refining it is natural follow-up once/if a
+  consumer needs cursor-precise selection.
+- Incremental =textDocumentSync=: whole-document only. Fine for the file
+  sizes org-mode documents actually reach.
+- Percent-encoding in =file://= URIs: [[file:pkg/orglsp/uri.go][pkg/orglsp/uri.go]] does not encode
+  special characters, since org-lsp only ever emits URIs from paths it
+  discovered itself (workspace scan) rather than round-tripping a client-
+  authored URI with unusual characters.
+- Generated =pkg/lsp= types from the LSP metaModel.json: still hand-written
+  (cross-ref lspbridge mgmt 8a6c4d87, filed for when the method surface grows
+  further).
+
+* Build
+: make build     # -> bin/org-lsp
+: make test      # unit tests, including the golden documentSymbol tree
+: make check     # lint + vet + vuln + test + cov
+: make cov       # per-package coverage table
+
+Run it:
+: org-lsp        # speaks LSP on stdin/stdout, like pyright-langserver --stdio
