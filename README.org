@@ -17,11 +17,16 @@ Two layers (this repo builds them bottom-up):
    and a minimal LSP lifecycle client (=pkg/lsp=): initialize / didOpen /
    didChange / shutdown, plus the protocol types (Location, Range,
    WorkspaceEdit, Diagnostic) that map to the shared =structast= DTO.
-2. *Broker* (later increment) — an ADR-0013-style socket-activated daemon
-   owning one warm LSP session per =(projectRoot, language)=, multiplexed to
-   BOTH mcp-ast (read) and ae (write). Never a merged third server: CQRS
-   stays intact — reads and writes hit the same warm session but through
-   separate client roles.
+2. *Broker* (=pkg/broker= + =cmd/lspbroker=) — an ADR-0013-style
+   socket-activated daemon owning one warm LSP session per
+   =(projectRoot, language)=, multiplexed to BOTH mcp-ast (read) and ae
+   (write). Lazy spawn, per-session single-flight cold start, idle-reap, and
+   clean shutdown-all on SIGTERM; path-based unix sockets only (abstract
+   sockets rejected). Never a merged third server: CQRS stays intact — reads
+   (documentSymbol / references / definition / hover) and writes (rename →
+   WorkspaceEdit → wsedit) hit the same warm session but through separate
+   client roles. A thin =broker.Client= is the caller-side seam for
+   mcp-ast / ae.
 
 The per-language project scope is discovered through the =pkg/projectcontext=
 seam (tsconfig.json / pubspec.yaml / compile_commands.json / pyrightconfig /
@@ -38,9 +43,24 @@ Cargo.toml), which generalizes the C/C++ include-context resolver.
 - [X] P0.2 WorkspaceEdit -> ae adapter (=pkg/wsedit=): neutral byte-offset edit
   =Plan= (=FromWorkspaceEdit=, URI→path, LSP line/UTF-16-char→UTF-8 byte offset);
   ae adapts FROM it (offset→unified-diff) so lspbridge stays zero-dep /
-  CGO_ENABLED=0. Seam: =docs/design/wsedit-ae-seam.org=
-- [ ] P0.3 socket-activated broker daemon (ADR-0013 pattern)
-- [ ] P0.3 read/write client roles for mcp-ast / ae
+  CGO_ENABLED=0. Seam: =docs/design/wsedit-ae-seam.org=. Plan carries the
+  =wsedit/1= schema marker (=wsedit.SchemaV1=) ae's =wseditingest= ingests.
+- [X] P0.3 LSP READ methods (=pkg/lsp=): documentSymbol (hierarchical
+  DocumentSymbol + flat SymbolInformation fallback), references, definition,
+  hover, and rename (→ WorkspaceEdit; both =changes= and =documentChanges= wire
+  forms normalized). LIVE proofs against pyright 1.1.411: documentSymbol
+  =[greet main]=, references at both use lines, and the rename WRITE LOOP
+  (rename → WorkspaceEdit → =wsedit.FromWorkspaceEdit= → =FileEdit.Apply=).
+- [X] P0.3 socket-activated broker daemon (ADR-0013 pattern): =pkg/broker=
+  library + =cmd/lspbroker=. Warm-session cache keyed on =Context.Key=, lazy
+  spawn (resolver chain → Spec; pyright preset), single-flight init, idle-reap
+  (default 10m), SIGTERM shutdown-all, path-based unix socket with stale-socket
+  cleanup. Wire protocol over =pkg/jsonrpc=: =broker/query= / =broker/status= /
+  =broker/shutdown=. LIVE end-to-end proof: client → socket → activated pyright
+  → documentSymbol + rename write-loop.
+- [X] P0.3 read/write client roles for mcp-ast / ae: =broker.Client=
+  (=Query= / =Status= / =Shutdown=) — the CQRS multiplexing seam; each consumer
+  builds its own LSP method+params, the broker keeps them on one warm session.
 
 * Design
 Full design: =mcp/docs/ecosystem/design/ecosystem-language-tooling-matrix.org=
@@ -50,9 +70,14 @@ cleanest single-server, no framework layering — its proof-of-concept also
 closes the Python-semantic gap.
 
 * Build
-: make build     # compile
-: make test      # unit tests
+: make build     # compile all (incl. cmd/lspbroker daemon)
+: make test      # unit tests (live pyright proofs skip when pyright absent)
 : make check     # lint + vet + vuln + test + cov (the check-suite gate)
 : make cov       # per-package coverage table
 
-Pure standard library, =CGO_ENABLED=0=.
+Run the broker daemon:
+: lspbroker [--socket PATH] [--idle-timeout DUR] [--verbose]
+
+Pure standard library, =CGO_ENABLED=0=. (The daemon uses the stdlib =flag=
+package rather than pflag, deliberately: adding a flag dependency would break
+the zero-external-dependency / no-=go.sum= keystone invariant.)

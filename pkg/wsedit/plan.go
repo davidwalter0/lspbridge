@@ -60,10 +60,25 @@ type FileEdit struct {
 	Edits []Edit
 }
 
+// SchemaV1 is the wire-contract version marker stamped on every [Plan] this
+// package emits. It is OPTIONAL on the wire — ae's ingest side
+// (wseditingest.ParsePlan) tolerates its absence for backward compatibility —
+// but when present it MUST equal SchemaV1, giving the write path explicit
+// drift protection. The value matches ae's wseditingest.SchemaV1 verbatim.
+const SchemaV1 = "wsedit/1"
+
 // Plan is a neutral, multi-file edit plan. It is pure data — nothing here
 // writes to disk. Files are sorted by Path for deterministic output.
+//
+// Schema carries the wire-format version ([SchemaV1]); it is emitted by
+// [FromWorkspaceEdit] and json-omitempty so a plan produced before the marker
+// existed still round-trips (ae accepts an absent schema). Only Schema takes a
+// json tag: the remaining fields keep Go's default capitalized keys ("Files",
+// "Path", "Edits", …) because that is the exact JSON shape ae's
+// wseditingest.ParsePlan already decodes.
 type Plan struct {
-	Files []FileEdit
+	Schema string     `json:"schema,omitempty"`
+	Files  []FileEdit
 }
 
 // Apply returns src with the FileEdit's edits applied. It is the executable

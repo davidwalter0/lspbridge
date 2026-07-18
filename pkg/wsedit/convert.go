@@ -27,7 +27,7 @@ import (
 // are sorted descending by Start (the apply-safe order). Overlapping edits
 // within a single file are rejected.
 func FromWorkspaceEdit(we lsp.WorkspaceEdit, sources map[lsp.DocumentURI][]byte) (*Plan, error) {
-	plan := &Plan{}
+	plan := &Plan{Schema: SchemaV1}
 	for uri, textEdits := range we.Changes {
 		src, ok := sources[uri]
 		if !ok {

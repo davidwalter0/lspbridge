@@ -1,6 +1,7 @@
 package wsedit
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 
@@ -411,5 +412,59 @@ func TestFromWorkspaceEdit_SameStartTieBreak(t *testing.T) {
 func TestURIToPath_EmptyFilePath(t *testing.T) {
 	if _, err := URIToPath("file://"); err == nil {
 		t.Error("expected error for file URI with no path, got nil")
+	}
+}
+
+// TestSchemaStamped is the mgmt 4c5b4838 proof: FromWorkspaceEdit stamps the
+// SchemaV1 marker so ae's wseditingest.ParsePlan sees an explicit version.
+func TestSchemaStamped(t *testing.T) {
+	we := lsp.WorkspaceEdit{Changes: map[lsp.DocumentURI][]lsp.TextEdit{
+		"file:///f.txt": {{Range: rng(0, 0, 0, 0), NewText: "x"}},
+	}}
+	plan, err := FromWorkspaceEdit(we, map[lsp.DocumentURI][]byte{"file:///f.txt": []byte("hello")})
+	if err != nil {
+		t.Fatalf("FromWorkspaceEdit: %v", err)
+	}
+	if plan.Schema != SchemaV1 {
+		t.Fatalf("plan.Schema = %q, want %q", plan.Schema, SchemaV1)
+	}
+	if SchemaV1 != "wsedit/1" {
+		t.Fatalf("SchemaV1 = %q, want wsedit/1 (must match ae wseditingest.SchemaV1)", SchemaV1)
+	}
+}
+
+// TestSchemaWireShape locks the exact JSON shape ae's wseditingest.ParsePlan
+// decodes: a lowercase "schema" key plus Go-default capitalized Files/Path/
+// Edits/Start/End/NewText. If this shape drifts, ae's ingest breaks.
+func TestSchemaWireShape(t *testing.T) {
+	we := lsp.WorkspaceEdit{Changes: map[lsp.DocumentURI][]lsp.TextEdit{
+		"file:///f": {{Range: rng(0, 0, 0, 0), NewText: "x"}},
+	}}
+	plan, err := FromWorkspaceEdit(we, map[lsp.DocumentURI][]byte{"file:///f": []byte("abc")})
+	if err != nil {
+		t.Fatalf("FromWorkspaceEdit: %v", err)
+	}
+	got, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	const want = `{"schema":"wsedit/1","Files":[{"Path":"/f","Edits":[{"Start":0,"End":0,"NewText":"x"}]}]}`
+	if string(got) != want {
+		t.Fatalf("wire shape drift:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+// TestSchemaOmitemptyOnRead confirms a plan produced before the marker existed
+// (no schema field) still round-trips — ae tolerates its absence.
+func TestSchemaOmitemptyOnRead(t *testing.T) {
+	var p Plan
+	if err := json.Unmarshal([]byte(`{"Files":[{"Path":"/f","Edits":[{"Start":0,"End":0,"NewText":"x"}]}]}`), &p); err != nil {
+		t.Fatalf("unmarshal schemaless plan: %v", err)
+	}
+	if p.Schema != "" {
+		t.Fatalf("schemaless plan decoded Schema = %q, want empty", p.Schema)
+	}
+	if len(p.Files) != 1 || p.Files[0].Path != "/f" {
+		t.Fatalf("files = %+v", p.Files)
 	}
 }

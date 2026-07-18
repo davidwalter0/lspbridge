@@ -1,0 +1,110 @@
+:PROPERTIES:
+:ID:       lspbridge-2026-07-18-feat-broker
+:END:
+#+title: Session 2026-07-18 — lspbridge/feat-broker (P0.3 broker keystone)
+#+date: 2026-07-18
+
+* Session State
+:PROPERTIES:
+:LAST_UPDATED: 2026-07-18
+:END:
+** Status
+Landed. P0.3 complete: LSP READ methods, socket-activated broker
+(=pkg/broker= + =cmd/lspbroker=), and LIVE pyright read/write proofs. Plus mgmt
+4c5b4838 (=wsedit.SchemaV1=). Gate GREEN (build/vet/lint 0/vuln clean,
+cov TOTAL 92.1%), merged --ff-only to main LOCALLY (no push — repo has no remote).
+** Completed
+- [X] pkg/lsp READ methods: documentSymbol (hierarchical + flat fallback),
+      references, definition, hover, rename (→ WorkspaceEdit)
+- [X] WorkspaceEdit normalizes BOTH =changes= and =documentChanges= (pyright)
+- [X] pkg/broker: warm-session cache, single-flight, idle-reap, Serve/Handler/Client
+- [X] cmd/lspbroker daemon (stdlib flag; SIGTERM shutdown + socket cleanup)
+- [X] mgmt 4c5b4838: =wsedit.SchemaV1 = "wsedit/1"= stamped on Plan
+- [X] LIVE proofs (pyright 1.1.411): documentSymbol, references, rename write-loop,
+      broker end-to-end
+** Next Steps
+- [ ] Wire mcp-ast (read) and ae (write) onto =broker.Client=
+- [ ] Additional language presets in =DefaultSpecFor= (tsserver, rust-analyzer)
+
+* Session Topic
+Complete the lspbridge P0 keystone (mgmt f51cf319): P0.3 broker + LSP read
+methods + live pyright read/write proofs; fold in mgmt 4c5b4838. Keep lspbridge
+pure-stdlib / CGO_ENABLED=0.
+
+* Decisions Made
+- *Broker mirrors ADR-0013's shape, scoped to LSP sessions* (no ns/cgroup
+  placement, no privilege drop — a workstation session cache, not a security
+  ring). Same primitives: path-based unix sockets only (abstract rejected),
+  broker owns stale-socket cleanup on (re)bind, jsonrpc over the unix conn.
+- *Servers launch on the broker's LIFETIME context*, never a request context —
+  =exec.CommandContext= binds process lifetime to its context, so a single
+  cancelled request must not reap the warm subprocess. Request ctx is used only
+  for the forwarded LSP Call.
+- *Single-flight via a per-session =ready= channel*: the first ensureSession
+  inserts a placeholder + spawns; concurrent callers for the same key block on
+  =ready=. srv/initErr published before =close(ready)=. Failed cold start drops
+  the placeholder so a later call retries.
+- *Idle-reap is clock-injectable* (=Config.Clock=): =reapIdle(now)= is unit-
+  tested deterministically; the reaper goroutine (started by =Serve=) calls it
+  with =b.now()=. In-flight guard (=inflight= counter) prevents reap mid-query.
+- *WorkspaceEdit.UnmarshalJSON normalizes both wire forms.* Verified pyright
+  1.1.411 returns =documentChanges= for rename EVEN without the client
+  advertising it; folding documentChanges→Changes keeps the write path uniform
+  (=wsedit.FromWorkspaceEdit= reads one map).
+- *stdlib =flag=, NOT pflag, for the daemon.* The global Go rule prefers pflag,
+  but adding it would create a =go.sum= and break the zero-external-dependency
+  keystone invariant the task explicitly reaffirmed. Specific constraint wins;
+  noted in README + daemon doc-comment. (CLAUDE.md › Rule Preservation §3.)
+- *mgmt 4c5b4838*: only =schema= takes a json tag; Files/Path/Edits/Start/End/
+  NewText keep Go-default capitalized keys — the exact shape ae's
+  =wseditingest.ParsePlan= already decodes (locked by a wire-shape test).
+
+* Files Touched
+- pkg/lsp/reads.go (documentSymbol/references/definition/hover/rename + params/results)
+- pkg/lsp/workspaceedit.go (WorkspaceEdit.UnmarshalJSON: changes + documentChanges)
+- pkg/lsp/lifecycle.go (DocumentSymbolClientCapabilities), types.go (doc note)
+- pkg/lsp/reads_test.go (canned-response + malformed + documentChanges tests)
+- pkg/jsonrpc/message.go (CodeInvalidParams)
+- pkg/wsedit/plan.go, convert.go (SchemaV1 + stamp), wsedit_test.go (schema tests)
+- pkg/broker/{protocol,broker,serve,socket,client}.go (the broker)
+- pkg/broker/{broker,serve,socket}_test.go + broker_pyright_live_test.go
+- pkg/server/pyright_reads_live_test.go (client-level live proofs)
+- cmd/fakelsp/main.go (canned documentSymbol for broker tests)
+- cmd/lspbroker/main.go (daemon)
+- README.org (roadmap P0.3 done)
+
+* Work Completed
+- Full gate green: CGO_ENABLED=0 build, vet, golangci-lint 0 issues,
+  govulncheck none, race tests pass, cov TOTAL 92.1% (broker 93.0, lsp 92.9).
+- Daemon smoke-tested: listens, SIGTERM → clean shutdown + socket removed, exit 0.
+- Zero-dependency invariant preserved (no go.sum, go.mod unchanged).
+
+* LIVE proof outputs (pyright 1.1.411)
+- documentSymbol → =[greet main]= (hierarchical=2)
+- references to greet → lines =[0 5 6]= (declaration + both uses)
+- rename write-loop → 3 edits → wsedit → Apply → =def welcome(name):= ... =welcome("a")= / =welcome("b")=
+- broker end-to-end → same, over a real unix socket via socket-activated pyright
+
+* Glossary
+- broker/query :: wire method {file, language?, method, params, text?} → raw LSP result
+- single-flight :: one cold start per (root,language) key; concurrent callers share it
+- idle-reap :: shut a warm session down after a quiescence window (default 10m)
+- documentChanges :: LSP's array WorkspaceEdit form (pyright uses it); folded into Changes
+- SchemaV1 :: =wsedit/1= marker ae's wseditingest tolerates/validates
+
+* Index
+- broker library → file:pkg/broker/broker.go
+- wire protocol/handler → file:pkg/broker/serve.go, file:pkg/broker/protocol.go
+- LSP read methods → file:pkg/lsp/reads.go
+- WorkspaceEdit dual-form → file:pkg/lsp/workspaceedit.go
+- schema marker → file:pkg/wsedit/plan.go
+- daemon → file:cmd/lspbroker/main.go
+
+* Cross-References
+- Parent todo: mgmt f51cf319 (mcp-ast) — P0 keystone
+- Also folded: mgmt 4c5b4838 (wsedit schema marker)
+- ADR mirrored: [[file:~/go/src/github.com/davidwalter0/mcp/docs/ecosystem/adr/0013-mcp-fs-socket-activation-broker.org]]
+- Prior session: [[id:lspbridge-2026-07-17-feat-ws-edit-adapter]]
+- ae ingest side: file:~/go/src/github.com/davidwalter0/mcp-agent-editor/pkg/wseditingest/wseditingest.go
+
+* Footnotes

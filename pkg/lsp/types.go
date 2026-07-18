@@ -40,6 +40,10 @@ type TextEdit struct {
 // WorkspaceEdit is a set of per-document text edits. The bridge maps this to
 // an ae transaction.Plan on the write path; the LSP server computes it purely
 // and never writes to disk.
+//
+// On the wire an edit arrives as EITHER "changes" (a URI→edits map) OR
+// "documentChanges" (a TextDocumentEdit array); [WorkspaceEdit.UnmarshalJSON]
+// normalizes both into Changes, so consumers only ever read this one field.
 type WorkspaceEdit struct {
 	Changes map[DocumentURI][]TextEdit `json:"changes,omitempty"`
 }

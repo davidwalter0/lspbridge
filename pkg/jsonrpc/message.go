@@ -17,6 +17,7 @@ const Version = "2.0"
 
 // Standard JSON-RPC error codes (subset used here).
 const (
+	CodeInvalidParams  = -32602
 	CodeMethodNotFound = -32601
 	CodeInternalError  = -32603
 )

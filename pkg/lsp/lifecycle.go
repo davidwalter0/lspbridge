@@ -42,6 +42,18 @@ type TextDocumentClientCapabilities struct {
 	// textDocument/publishDiagnostics notification. Per-feature capability
 	// structs continue to land here as they're wired in.
 	PublishDiagnostics *PublishDiagnosticsClientCapabilities `json:"publishDiagnostics,omitempty"`
+	// DocumentSymbol advertises textDocument/documentSymbol support; its
+	// HierarchicalDocumentSymbolSupport flag selects the nested DocumentSymbol
+	// result shape over the flat SymbolInformation one.
+	DocumentSymbol *DocumentSymbolClientCapabilities `json:"documentSymbol,omitempty"`
+}
+
+// DocumentSymbolClientCapabilities advertises the client's
+// textDocument/documentSymbol support.
+type DocumentSymbolClientCapabilities struct {
+	// HierarchicalDocumentSymbolSupport asks the server to return the nested
+	// [DocumentSymbol] tree rather than a flat [SymbolInformation] list.
+	HierarchicalDocumentSymbolSupport bool `json:"hierarchicalDocumentSymbolSupport,omitempty"`
 }
 
 // PublishDiagnosticsClientCapabilities advertises the client's
