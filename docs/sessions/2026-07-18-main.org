@@ -1,0 +1,206 @@
+:PROPERTIES:
+:ID:       lspbridge-2026-07-18-main
+:END:
+#+title: Session 2026-07-18 — lspbridge/main (org-lsp: mgmt 6131a2a1)
+#+date: 2026-07-18
+
+* Session State
+:PROPERTIES:
+:LAST_UPDATED: 2026-07-18
+:END:
+
+** Status
+Landed. mgmt 6131a2a1 complete: org-lsp, a pure-Go Emacs-free org-mode LSP
+server, built as a nested Go module (=org-lsp/=) and merged --ff-only to
+main LOCALLY (repo has no remote — not pushed). Both modules gate GREEN.
+
+** Completed
+- [X] Read mgmt todo 6131a2a1 in full (mcp__mgmt__list-todos, dir-scoped)
+- [X] Surveyed lspbridge substrate: pkg/jsonrpc (Conn+Handler), pkg/lsp
+      (existing DocumentSymbol/SymbolKind/etc., already spec-accurate),
+      cmd/fakelsp (the mini-server pattern to mirror)
+- [X] Surveyed the org module (orgast): Parse/ParseString/Headings/
+      SrcBlocks/Links/Walk, IsCryptHeading/IsPGPBlock — discovered it (and
+      the niklasfasching/go-org v1.9.1 it wraps) carries NO source position
+      of any kind
+- [X] Home decision: nested module =github.com/davidwalter0/lspbridge/org-lsp=
+      with =replace github.com/davidwalter0/lspbridge => ../= (root has no
+      git remote) + a direct =require github.com/davidwalter0/org v0.1.0=
+      (that module IS tagged/published, fully present in the local module
+      cache — verified =GOPROXY=off go build ./...= succeeds for it)
+- [X] Verified an identical local precedent already exists:
+      go-autocfg/vaultsource/go.mod (nested module, replace => ../,
+      placeholder pseudo-version, unpublished parent)
+- [X] Verified FoldingRange/FoldingRangeParams/FoldingRangeKind/
+      WorkspaceSymbolParams/TextDocumentSyncKind/ServerCapabilities shapes
+      directly against a live fetch of the LSP 3.18 metaModel.json (not
+      recalled from memory) and the exit/shutdown code-0-vs-1 behavior
+      against the spec prose
+- [X] pkg/lsp additions (root, zero-dep, no new imports beyond stdlib):
+      FoldingRange + Client.FoldingRange (reads.go), WorkspaceSymbolParams +
+      Client.WorkspaceSymbol (new workspacesymbol.go), tests for both
+- [X] org-lsp/pkg/orglsp: lineindex.go (the position oracle — re-scans raw
+      text for heading/block/drawer syntax, aligns against orgast's
+      crypt/PGP-filtered semantic lists by document-order + text-containment
+      matching, never by raw index), symbols.go (nested DocumentSymbol tree
+      builder, headings+src-blocks merged into one level-sorted stack build),
+      folding.go, diagnostics.go (org-lint-lite), workspace.go (mtime-cached
+      *.org scan), buffers.go, uri.go, server.go (Handler dispatch,
+      proper MethodNotFound for unimplemented methods, shutdown/exit
+      code-0-vs-1 tracking)
+- [X] cmd/org-lsp/main.go: stdio wiring, LSP-spec exit-code behavior
+- [X] Golden documentSymbol test over a session-trace-shaped fixture
+      (properties drawer, nested headings, src block, :crypt: subtree with
+      a nested heading under it) — asserts exact tree shape AND that no
+      crypt content ever leaks into any Name/Detail
+- [X] Found + fixed a real bug during testing: orgast.Link.URL bakes the
+      "protocol:" prefix into the string (go-org's parseRegularLink never
+      strips it) — brokenLinkDiagnostics was treating "file:existing.png"
+      as a literal path and flagging existing files as broken; fixed by
+      trimming "protocol:" before path resolution
+- [X] Full check suite green on BOTH modules: build/vet clean,
+      golangci-lint 0 issues, govulncheck none, all tests pass (root
+      pkg/lsp cov 92.1%; org-lsp pkg/orglsp cov 89.4%)
+- [X] End-to-end smoke test of the REAL COMPILED bin/org-lsp binary, driven
+      as a subprocess over actual OS pipes with real Content-Length-framed
+      JSON-RPC (not just the in-process test harness): initialize,
+      didOpen -> publishDiagnostics, documentSymbol, foldingRange,
+      workspace/symbol, an unimplemented method -> proper -32601, and
+      shutdown+exit -> real process exit code 0
+- [X] Committed (841b4e8), merged --ff-only onto primary's main, re-gated
+      on main, cleaned worktree build artifacts, removed the feature
+      worktree
+- [X] mgmt 6131a2a1 marked done with a full summary
+
+** Next Steps
+- [ ] Wire org-lsp into an actual editor config (VS Code/Neovim/Zed) for a
+      real interactive smoke test, if/when someone wants to edit org files
+      through it day to day
+- [ ] Consider column-precise selectionRange if a consumer ever needs
+      cursor-precise heading selection (today: whole-line, documented v1
+      simplification)
+- [ ] If lspbridge is ever published (gets a remote + tag), drop org-lsp's
+      relative replace directive in favor of a real versioned require
+
+* Session Topic
+Implement mgmt 6131a2a1: org-lsp, a pure-Go, Emacs-free org-mode LSP server,
+using the org module's orgast engine behind lspbridge's existing symmetric
+jsonrpc substrate. Decide and document the module-home tradeoff (lspbridge's
+root must stay zero-dependency), ship a small honest v1 capability surface,
+and prove it end to end — not just unit tests, the real compiled binary.
+
+* Decisions Made
+- *Nested Go module, not a root-module package.* lspbridge's zero-dependency
+  invariant (no go.sum) is load-bearing across several prior sessions; a
+  subdirectory with its own go.mod is invisible to the parent module's
+  build (=go list ./...= from root excludes it entirely), so this is the
+  only way to add an orgast dependency without poisoning every consumer of
+  pkg/jsonrpc/pkg/lsp. Verified, not assumed: root go.sum absence
+  reconfirmed after landing this on main.
+- *Relative replace directive for the unpublished parent.* Root lspbridge
+  has no git remote (verified: =git remote -v= empty) so a nested module
+  cannot =require= it via the proxy. =replace github.com/davidwalter0/lspbridge
+  => ../= plus a placeholder pseudo-version is the standard Go workaround —
+  and not improvised here: go-autocfg/vaultsource already does exactly this
+  in this same GOPATH, for the identical reason.
+- *github.com/davidwalter0/org v0.1.0 needs no replace* — it IS tagged and
+  published, and was already present in the local module cache (confirmed
+  a full offline =GOPROXY=off go build ./...= before depending on it), so a
+  plain =require= was correct and simpler.
+- *The position-oracle split (orgast=semantics, lineindex.go=positions).*
+  go-org v1.9.1 has zero position tracking on its AST — discovered by
+  reading its actual struct definitions (Headline, Block, Drawer — no Pos/
+  Line field anywhere), not assumed. Rather than forking/patching orgast or
+  go-org, org-lsp re-derives positions independently via small line-
+  oriented regexes matching the same syntax tokens go-org's own lexer uses,
+  then ALIGNS that scan against orgast's semantic lists by document order +
+  (level, text-containment) matching — never by raw index (fragile) and
+  never by re-deriving crypt/PGP logic (orgast already owns that
+  correctly; duplicating it would be a fork-of-truth smell).
+- *Src blocks nest into the DocumentSymbol tree via a synthetic level*, not
+  a separate attach-children pass: a src block is assigned
+  (enclosing-heading-level + 1) and merged into the SAME line-sorted,
+  level-keyed stack-build as headings, so it nests exactly like a deeper
+  sub-heading would. This also fixed a Kind-consistency issue: a heading
+  with no sub-heading but ONE src-block child (e.g. "Implementation" in the
+  test fixture) must still render Kind=Namespace, not String — Kind is
+  computed from the FINAL rendered children count, not a heading-only peek.
+- *Kind mapping for headings (documented, not hidden): Namespace if it has
+  any children (heading or src-block), String if it's a leaf.* LSP has no
+  purpose-built "outline heading" kind; this is the closest sensible,
+  explicitly documented stand-in per the todo's own instruction to "pick
+  sensible values and document."
+- *Unimplemented methods return a real JSON-RPC MethodNotFound*, not a
+  silent =null= success — stricter than the fakelsp test-fixture precedent
+  (which is fine as a test double, not as the contract for editors that
+  will actually probe capabilities).
+- *Exit-code fidelity*: shutdown-then-exit -> process exit 0; exit without
+  a prior shutdown -> exit 1, per the LSP spec's Exit Notification section
+  (verified via a direct curl+grep of the spec HTML, not recalled).
+- *Coverage scope matches the sibling root Makefile's convention*: =make
+  cov= scans =./pkg/...= only, excluding =cmd/= — the root lspbridge
+  Makefile already established this (cmd/fakelsp, cmd/lspbroker aren't
+  coverage-scored either), so org-lsp's Makefile follows the same local
+  norm rather than introducing a different one.
+
+* Files Touched
+- pkg/lsp/reads.go (+FoldingRange/FoldingRangeParams/FoldingRangeKind/Client.FoldingRange)
+- pkg/lsp/reads_test.go (+FoldingRange tests)
+- pkg/lsp/workspacesymbol.go, workspacesymbol_test.go (new)
+- org-lsp/go.mod, go.sum, .gitignore, Makefile, README.org (new nested module)
+- org-lsp/cmd/org-lsp/main.go (new)
+- org-lsp/pkg/orglsp/{lineindex,symbols,folding,diagnostics,workspace,buffers,uri,server}.go (new)
+- org-lsp/pkg/orglsp/{lineindex,symbols,folding,diagnostics,workspace,server}_test.go (new)
+- org-lsp/pkg/orglsp/testdata/session-fixture.org (new golden fixture)
+
+* Work Completed
+- Full gate green on both modules: build/vet clean, golangci-lint 0 issues
+  each, govulncheck none each, all tests pass. Root pkg/lsp cov 92.1% (was
+  92.1% before too — additions didn't move the needle materially); org-lsp
+  pkg/orglsp cov 89.4%.
+- Root zero-dependency invariant reconfirmed post-merge: no go.sum at repo
+  root; =go list ./...= from root excludes org-lsp/* entirely.
+- Real end-to-end proof: built bin/org-lsp, drove it as an actual OS
+  subprocess with hand-framed Content-Length JSON-RPC messages (see Index
+  below), asserting the exact golden documentSymbol tree, a clean
+  publishDiagnostics batch, 11 folding ranges, a workspace/symbol match by
+  rootUri, a real -32601 for an unimplemented method, and process exit code
+  0 after shutdown+exit.
+
+* Glossary
+- position oracle :: this session's term for pkg/orglsp/lineindex.go — the
+  file that reconstructs line/Range information orgast/go-org never track
+- level-sorted stack build :: the single algorithm ([[file:pkg/orglsp/symbols.go][buildSymbolTree]]) that
+  nests both headings and src-block leaf symbols by comparing outline level
+- org-lint-lite :: org-lsp's one diagnostics pass: broken file: links +
+  unclosed #+begin_ blocks, nothing heavier
+- strata boundary :: the syntax-vs-behavior line this project draws
+  everywhere org is involved — orgast/org-lsp own syntax, real Emacs owns
+  behavior (babel, agenda, formulas)
+
+* Index
+- home decision + tradeoff → [[file:org-lsp/README.org::* Home: a nested module, not a new package in lspbridge's =pkg/=][org-lsp/README.org]]
+- position oracle rationale → file:org-lsp/pkg/orglsp/lineindex.go
+- golden symbol-tree test → file:org-lsp/pkg/orglsp/symbols_test.go
+- crypt non-leakage assertion → [[file:org-lsp/pkg/orglsp/symbols_test.go::TestDocumentSymbolsGoldenTree][TestDocumentSymbolsGoldenTree]]
+- the go-org URL-prefix quirk fix → file:org-lsp/pkg/orglsp/diagnostics.go
+- LSP capability wiring → file:org-lsp/pkg/orglsp/server.go
+- root pkg/lsp additions → file:pkg/lsp/reads.go, file:pkg/lsp/workspacesymbol.go
+
+* Cross-References
+- mgmt todo implemented: 6131a2a1 (this repo, marked done)
+- Cross-ref'd by the todo itself: f51cf319 (P0 keystone), 8a6c4d87
+  (codegen-from-metaModel, still open, still low priority)
+- Prior session: [[id:lspbridge-2026-07-18-feat-broker]]
+- Registry: [[file:~/org/claude/Project-Registry.org]]
+
+* Footnotes
+[fn:1] LSP 3.18 metaModel.json, fetched directly:
+       https://raw.githubusercontent.com/microsoft/language-server-protocol/gh-pages/_specifications/lsp/3.18/metaModel/metaModel.json
+       — FoldingRange/FoldingRangeParams/WorkspaceSymbolParams/DocumentSymbol
+       shapes quoted verbatim from this fetch, 2026-07-18.
+[fn:2] LSP 3.18 specification HTML (exit/shutdown exit-code prose):
+       https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/
+       — "The server should exit with success code 0 if the shutdown
+       request has been received before; otherwise with error code 1."
+       fetched and grepped verbatim, 2026-07-18.
