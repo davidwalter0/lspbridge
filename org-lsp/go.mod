@@ -6,7 +6,7 @@ replace github.com/davidwalter0/lspbridge => ../
 
 require (
 	github.com/davidwalter0/lspbridge v0.0.0-00010101000000-000000000000
-	github.com/davidwalter0/org v0.1.0
+	github.com/davidwalter0/org v0.1.1
 )
 
 require (
