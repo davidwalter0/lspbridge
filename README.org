@@ -61,6 +61,9 @@ Cargo.toml), which generalizes the C/C++ include-context resolver.
 - [X] P0.3 read/write client roles for mcp-ast / ae: =broker.Client=
   (=Query= / =Status= / =Shutdown=) — the CQRS multiplexing seam; each consumer
   builds its own LSP method+params, the broker keeps them on one warm session.
+- [X] Codegen: =pkg/lsp= data types generated from the pinned LSP 3.18
+  metaModel.json instead of hand-transcribed (mgmt 8a6c4d87) — see
+  "Codegen" below.
 
 * Design
 Full design: =mcp/docs/ecosystem/design/ecosystem-language-tooling-matrix.org=
@@ -68,6 +71,65 @@ Full design: =mcp/docs/ecosystem/design/ecosystem-language-tooling-matrix.org=
 journal. Reference server for P0 is *pyright* (=pyright-langserver --stdio=):
 cleanest single-server, no framework layering — its proof-of-concept also
 closes the Python-semantic gap.
+
+* Codegen: pkg/lsp types from the LSP metaModel (mgmt 8a6c4d87)
+Most of =pkg/lsp='s protocol types are generated from a pinned copy of the
+official LSP metaModel.json rather than hand-transcribed, so the type shapes
+stay faithful to spec as the method surface grows. Trigger for this
+migration: the read-method surface landed (documentSymbol / references /
+definition / hover / rename / foldingRange / workspace-symbol) plus
+publishDiagnostics — well past the "~5 more methods" threshold the original
+hand-written =pkg/lsp= doc comment flagged.
+
+- *Pin*: LSP 3.18.0 =metaModel.json=, vendored at =cmd/lspgen/metaModel.json=
+  (sha256 =caae8df639a4248520a3f589fd72945365e9d8ebca5baf564161a515430d9d41=,
+  fetched 2026-07-18 from
+  https://raw.githubusercontent.com/microsoft/language-server-protocol/gh-pages/_specifications/lsp/3.18/metaModel/metaModel.json).
+  =cmd/lspgen= embeds the file (=go:embed=) and re-verifies this hash at
+  every run, so a corrupted or hand-edited vendor copy fails loudly instead
+  of silently generating from the wrong spec text.
+- *Generator*: =cmd/lspgen= (stdlib-only — =encoding/json= + =text/template=
+  + =go/format= + =embed= — the root zero-=go.sum= invariant holds; verified
+  via =go list -deps=). It reads a CONFIGURED ALLOWLIST of
+  structures/enumerations (=cmd/lspgen/config.go=), not the whole 3.18
+  surface, and renders =pkg/lsp/types_gen.go= (DO-NOT-EDIT). Regenerate
+  after bumping the pin or editing the allowlist:
+  : go generate ./pkg/lsp/...
+  Generation is deterministic — identical input always produces
+  byte-identical output. =cmd/lspgen='s own tests assert this in-process;
+  the migration itself was additionally verified with two independent
+  =go generate= process invocations diffing byte-for-byte clean.
+- *Generated* (=types_gen.go=): the base geometry (Position, Range, Location,
+  LocationLink), TextEdit, Diagnostic — plus the new DiagnosticRelatedInformation
+  (the todo's explicit "+related" fidelity gain) — and its
+  DiagnosticSeverity / SymbolKind / SymbolTag / FoldingRangeKind enums,
+  DocumentSymbol / SymbolInformation, FoldingRange, MarkupContent, every
+  read-method Params type (TextDocumentIdentifier, ReferenceContext/Params,
+  DefinitionParams, HoverParams, RenameParams, FoldingRangeParams,
+  WorkspaceSymbolParams, DocumentSymbolParams), the lifecycle/text-sync types
+  (ServerInfo, ClientInfo, TextDocumentItem, VersionedTextDocumentIdentifier,
+  DidOpenTextDocumentParams, DidChangeTextDocumentParams, InitializeResult,
+  PublishDiagnosticsParams), and a deliberately trimmed ClientCapabilities
+  family (ClientCapabilities through PublishDiagnosticsClientCapabilities —
+  each restricted, via the generator's =onlyFields= mechanism, to just the
+  field(s) lspbridge actually advertises today).
+- *Hand-written, deliberately NOT generated* — documented field-by-field in
+  =cmd/lspgen/config.go='s header comment: WorkspaceEdit (+
+  TextDocumentEdit / OptionalVersionedTextDocumentIdentifier) for its custom
+  wire-form normalization; Hover for its custom polymorphic-contents
+  normalization; TextDocumentContentChangeEvent for its deliberate
+  whole-document-sync-only subset; DocumentSymbolResult, an lspbridge-invented
+  discriminator with no metaModel structure of its own; and InitializeParams,
+  a deliberately minimal subset of a much larger real structure. A handful of
+  individual fields also carry documented =fieldOverride= entries
+  (Diagnostic.code/message, MarkupContent.kind, TextDocumentItem.languageId,
+  FoldingRange.start/endCharacter, InitializeResult.capabilities) where the
+  mechanical spec-accurate type would either break an existing call site or
+  pull in a structure this package intentionally doesn't model (e.g.
+  ServerCapabilities, by far the largest structure in the whole metaModel).
+- *The migration is a drop-in*: every pre-existing =pkg/lsp= and =org-lsp=
+  test passes unchanged, and the generated Go type + json tag for every type
+  that already existed is byte-for-byte what was hand-written before.
 
 * Build
 : make build     # compile all (incl. cmd/lspbroker daemon)

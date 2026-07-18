@@ -15,6 +15,18 @@ import (
 // UTF-16 code units (see [Position]). Callers that speak the structast DTO
 // (1-indexed, UTF-8) convert at the boundary; the write path converts via
 // [github.com/davidwalter0/lspbridge/pkg/wsedit.ByteOffset].
+//
+// The request Params/result-element types this file's methods use
+// (TextDocumentIdentifier, SymbolKind, SymbolTag, DocumentSymbol,
+// SymbolInformation, DocumentSymbolParams, ReferenceContext, ReferenceParams,
+// DefinitionParams, HoverParams, MarkupContent, RenameParams,
+// FoldingRangeParams, FoldingRangeKind, FoldingRange) are generated —
+// see types_gen.go and cmd/lspgen/config.go. DocumentSymbolResult and Hover
+// stay hand-written here: DocumentSymbolResult has no metaModel structure of
+// its own (it's this package's own discriminator over the
+// DocumentSymbol[] | SymbolInformation[] | null result), and Hover's
+// [Hover.UnmarshalJSON] normalizes a polymorphic wire shape that is itself
+// out of scope for generation (see config.go).
 
 // Read/rename method names.
 const (
@@ -25,84 +37,6 @@ const (
 	renameMethod         = "textDocument/rename"
 	foldingRangeMethod   = "textDocument/foldingRange"
 )
-
-// TextDocumentIdentifier names a document by URI.
-type TextDocumentIdentifier struct {
-	URI DocumentURI `json:"uri"`
-}
-
-// SymbolKind is the LSP symbol-kind enumeration (1..26).
-type SymbolKind int
-
-// LSP symbol kinds.
-const (
-	SymbolKindFile          SymbolKind = 1
-	SymbolKindModule        SymbolKind = 2
-	SymbolKindNamespace     SymbolKind = 3
-	SymbolKindPackage       SymbolKind = 4
-	SymbolKindClass         SymbolKind = 5
-	SymbolKindMethod        SymbolKind = 6
-	SymbolKindProperty      SymbolKind = 7
-	SymbolKindField         SymbolKind = 8
-	SymbolKindConstructor   SymbolKind = 9
-	SymbolKindEnum          SymbolKind = 10
-	SymbolKindInterface     SymbolKind = 11
-	SymbolKindFunction      SymbolKind = 12
-	SymbolKindVariable      SymbolKind = 13
-	SymbolKindConstant      SymbolKind = 14
-	SymbolKindString        SymbolKind = 15
-	SymbolKindNumber        SymbolKind = 16
-	SymbolKindBoolean       SymbolKind = 17
-	SymbolKindArray         SymbolKind = 18
-	SymbolKindObject        SymbolKind = 19
-	SymbolKindKey           SymbolKind = 20
-	SymbolKindNull          SymbolKind = 21
-	SymbolKindEnumMember    SymbolKind = 22
-	SymbolKindStruct        SymbolKind = 23
-	SymbolKindEvent         SymbolKind = 24
-	SymbolKindOperator      SymbolKind = 25
-	SymbolKindTypeParameter SymbolKind = 26
-)
-
-// SymbolTag is the LSP symbol-tag enumeration.
-type SymbolTag int
-
-// SymbolTagDeprecated marks a symbol as deprecated.
-const SymbolTagDeprecated SymbolTag = 1
-
-// DocumentSymbol is the modern, hierarchical result element of
-// textDocument/documentSymbol: a symbol with a nesting Range, a narrower
-// SelectionRange (the name), and nested Children. A server returns this shape
-// only when the client advertises hierarchicalDocumentSymbolSupport; otherwise
-// it returns the flat [SymbolInformation] form.
-type DocumentSymbol struct {
-	Name           string           `json:"name"`
-	Detail         string           `json:"detail,omitempty"`
-	Kind           SymbolKind       `json:"kind"`
-	Tags           []SymbolTag      `json:"tags,omitempty"`
-	Deprecated     bool             `json:"deprecated,omitempty"`
-	Range          Range            `json:"range"`
-	SelectionRange Range            `json:"selectionRange"`
-	Children       []DocumentSymbol `json:"children,omitempty"`
-}
-
-// SymbolInformation is the legacy, flat result element of
-// textDocument/documentSymbol (and the workspace/symbol result): a symbol with
-// a full [Location] rather than nested ranges. ContainerName is the enclosing
-// symbol's name, if any.
-type SymbolInformation struct {
-	Name          string      `json:"name"`
-	Kind          SymbolKind  `json:"kind"`
-	Tags          []SymbolTag `json:"tags,omitempty"`
-	Deprecated    bool        `json:"deprecated,omitempty"`
-	Location      Location    `json:"location"`
-	ContainerName string      `json:"containerName,omitempty"`
-}
-
-// DocumentSymbolParams is the textDocument/documentSymbol request payload.
-type DocumentSymbolParams struct {
-	TextDocument TextDocumentIdentifier `json:"textDocument"`
-}
 
 // DocumentSymbolResult carries whichever of the two shapes the server returned.
 // textDocument/documentSymbol replies with EITHER a hierarchical
@@ -154,20 +88,6 @@ func (c *Client) DocumentSymbol(ctx context.Context, params DocumentSymbolParams
 	return res, nil
 }
 
-// ReferenceContext scopes a references request; IncludeDeclaration adds the
-// symbol's own declaration to the returned locations.
-type ReferenceContext struct {
-	IncludeDeclaration bool `json:"includeDeclaration"`
-}
-
-// ReferenceParams is the textDocument/references request payload. Position is
-// 0-indexed with a UTF-16 character offset.
-type ReferenceParams struct {
-	TextDocument TextDocumentIdentifier `json:"textDocument"`
-	Position     Position               `json:"position"`
-	Context      ReferenceContext       `json:"context"`
-}
-
 // References returns every location that references the symbol at the given
 // position. A null result yields a nil slice and a nil error.
 func (c *Client) References(ctx context.Context, params ReferenceParams) ([]Location, error) {
@@ -183,13 +103,6 @@ func (c *Client) References(ctx context.Context, params ReferenceParams) ([]Loca
 		return nil, err
 	}
 	return locs, nil
-}
-
-// DefinitionParams is the textDocument/definition request payload. Position is
-// 0-indexed with a UTF-16 character offset.
-type DefinitionParams struct {
-	TextDocument TextDocumentIdentifier `json:"textDocument"`
-	Position     Position               `json:"position"`
 }
 
 // Definition returns the definition location(s) of the symbol at the given
@@ -229,24 +142,14 @@ func decodeLocations(raw json.RawMessage) ([]Location, error) {
 	}
 }
 
-// HoverParams is the textDocument/hover request payload. Position is 0-indexed
-// with a UTF-16 character offset.
-type HoverParams struct {
-	TextDocument TextDocumentIdentifier `json:"textDocument"`
-	Position     Position               `json:"position"`
-}
-
-// MarkupContent is rendered hover/documentation content. Kind is "plaintext"
-// or "markdown".
-type MarkupContent struct {
-	Kind  string `json:"kind"`
-	Value string `json:"value"`
-}
-
 // Hover is the textDocument/hover result: rendered Contents and an optional
 // Range the hover applies to. The LSP Contents field is polymorphic
 // (MarkedString | MarkedString[] | MarkupContent); [Hover.UnmarshalJSON]
 // normalizes every form to a single [MarkupContent].
+//
+// Hover is hand-written rather than generated (cmd/lspgen/config.go): this
+// normalization is behavior, not a mechanical data shape, and MarkedString is
+// not modeled at all.
 type Hover struct {
 	Contents MarkupContent `json:"contents"`
 	Range    *Range        `json:"range,omitempty"`
@@ -347,15 +250,6 @@ func (c *Client) Hover(ctx context.Context, params HoverParams) (*Hover, error) 
 	return &h, nil
 }
 
-// RenameParams is the textDocument/rename request payload: rename the symbol at
-// Position (0-indexed, UTF-16) to NewName. The server computes the edit purely
-// and returns a [WorkspaceEdit]; it never writes to disk.
-type RenameParams struct {
-	TextDocument TextDocumentIdentifier `json:"textDocument"`
-	Position     Position               `json:"position"`
-	NewName      string                 `json:"newName"`
-}
-
 // Rename requests the [WorkspaceEdit] that renames the symbol at Position to
 // NewName. A null result (rename not possible at that position) yields
 // (nil, nil). The returned edit is normalized by [WorkspaceEdit.UnmarshalJSON]
@@ -375,38 +269,6 @@ func (c *Client) Rename(ctx context.Context, params RenameParams) (*WorkspaceEdi
 		return nil, err
 	}
 	return &we, nil
-}
-
-// FoldingRangeParams is the textDocument/foldingRange request payload.
-type FoldingRangeParams struct {
-	TextDocument TextDocumentIdentifier `json:"textDocument"`
-}
-
-// FoldingRangeKind categorizes a [FoldingRange] (e.g. so a client's "fold all
-// comments" command can select just that kind). Per the LSP spec it is an
-// open string enumeration — [FoldingRangeKindComment], [FoldingRangeKindImports]
-// and [FoldingRangeKindRegion] are the standardized values (LSP 3.18
-// metaModel, FoldingRangeKind), but a server may report others.
-type FoldingRangeKind string
-
-// Standardized folding range kinds.
-const (
-	FoldingRangeKindComment FoldingRangeKind = "comment"
-	FoldingRangeKindImports FoldingRangeKind = "imports"
-	FoldingRangeKindRegion  FoldingRangeKind = "region"
-)
-
-// FoldingRange is one foldable line span. StartCharacter/EndCharacter are
-// pointers because the LSP spec gives the unset case its own meaning
-// ("defaults to the length of the start/end line") distinct from character 0;
-// a server that folds whole lines (as org-lsp does) leaves both nil.
-type FoldingRange struct {
-	StartLine      int              `json:"startLine"`
-	StartCharacter *int             `json:"startCharacter,omitempty"`
-	EndLine        int              `json:"endLine"`
-	EndCharacter   *int             `json:"endCharacter,omitempty"`
-	Kind           FoldingRangeKind `json:"kind,omitempty"`
-	CollapsedText  string           `json:"collapsedText,omitempty"`
 }
 
 // FoldingRange requests the foldable line ranges for a document. A null

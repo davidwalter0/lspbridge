@@ -13,13 +13,8 @@ import (
 // servers use to report per-document diagnostics.
 const publishDiagnosticsMethod = "textDocument/publishDiagnostics"
 
-// PublishDiagnosticsParams is the payload of the server-to-client
-// "textDocument/publishDiagnostics" notification.
-type PublishDiagnosticsParams struct {
-	URI         DocumentURI  `json:"uri"`
-	Version     int          `json:"version,omitempty"`
-	Diagnostics []Diagnostic `json:"diagnostics"`
-}
+// PublishDiagnosticsParams (the payload of that notification) is generated —
+// see types_gen.go and cmd/lspgen/config.go.
 
 // pollInterval is how often [DiagnosticsCollector.Wait] rechecks for a
 // non-empty diagnostics batch. It trades a small amount of latency for a

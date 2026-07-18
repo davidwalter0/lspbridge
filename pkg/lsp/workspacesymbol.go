@@ -8,12 +8,8 @@ import (
 // workspaceSymbolMethod is the workspace/symbol method name.
 const workspaceSymbolMethod = "workspace/symbol"
 
-// WorkspaceSymbolParams is the workspace/symbol request payload. Per the LSP
-// spec, Query should be matched "in a relaxed way" (case-insensitive,
-// characters appearing in order); an empty Query requests every symbol.
-type WorkspaceSymbolParams struct {
-	Query string `json:"query"`
-}
+// WorkspaceSymbolParams (the workspace/symbol request payload) is generated —
+// see types_gen.go and cmd/lspgen/config.go.
 
 // WorkspaceSymbol requests symbols matching params.Query across the whole
 // workspace. The result is the flat [SymbolInformation] shape; this package

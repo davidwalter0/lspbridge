@@ -1,0 +1,226 @@
+:PROPERTIES:
+:ID:       lspbridge-2026-07-18-feat-lspgen
+:END:
+#+title: Session 2026-07-18 — lspbridge/feat-lspgen (mgmt 8a6c4d87)
+#+date: 2026-07-18
+
+* Session State
+:PROPERTIES:
+:LAST_UPDATED: 2026-07-18
+:END:
+
+** Status
+Landed. mgmt 8a6c4d87 complete: pkg/lsp's data-shape types are now generated
+from a pinned LSP 3.18 metaModel.json via a new cmd/lspgen (stdlib-only)
+generator, with a small, fully-documented set of hand-tuned types (custom
+marshal logic or a deliberate spec subset) staying hand-written. Drop-in:
+every pre-existing pkg/lsp and org-lsp test passes unchanged.
+
+** Completed
+- [X] Surveyed every existing pkg/lsp file (types.go, workspaceedit.go,
+      reads.go, workspacesymbol.go, diagnostics.go, lifecycle.go, client.go)
+      and every call site across pkg/wsedit, pkg/broker, pkg/server,
+      cmd/fakelsp, and the org-lsp nested module, to build a field-exact
+      inventory of what must NOT change shape
+- [X] Fetched + vendored the pinned LSP 3.18.0 metaModel.json (sha256
+      caae8df639a4248520a3f589fd72945365e9d8ebca5baf564161a515430d9d41) into
+      cmd/lspgen/metaModel.json, embedded via go:embed, hash-verified at
+      every generator run
+- [X] Inspected the ACTUAL metaModel.json structure-by-structure (Position,
+      Range, Location, LocationLink, TextEdit, WorkspaceEdit family,
+      Diagnostic family, DocumentSymbol/SymbolInformation, FoldingRange,
+      MarkupContent/Hover, every read-method Params type, the lifecycle
+      types, the ClientCapabilities family) rather than assuming shapes from
+      memory — this surfaced a real, verified spec fact: LSP 3.18 widened
+      Diagnostic.message to string | MarkupContent (behind a new
+      textDocument.diagnostic.markupMessageSupport capability), which drove
+      a documented field override rather than a silent type change
+- [X] Designed and implemented cmd/lspgen: metamodel.go (schema mirror),
+      config.go (the allowlist: structConfigs/enumConfigs/externalTypeKinds/
+      baseTypeGo, plus the full exclusion rationale as a doc comment),
+      generate.go (extends-flattening, never-auto-include-mixins,
+      reference-kind resolution, exportedName with golint's initialism
+      list, text/template rendering, go/format.Source), main.go (embed +
+      sha256 self-check + CLI), generate_test.go
+- [X] Fixed two bugs found via actually running the generator: (a)
+      anyType.Value needed to be json.RawMessage not *anyType (a
+      stringLiteral kind elsewhere in the 387-structure file has a scalar
+      "value", not an object); (b) a text/template scoping bug ($ inside a
+      nested range still means the root, not the enclosing enum — needed
+      {{$enum := .}})
+- [X] Fixed a design gap: PublishDiagnosticsParams was analyzed and decided
+      as a clean full-generate candidate during design but never actually
+      added to structConfigs — caught immediately by `go build` failing
+      with "undefined: PublishDiagnosticsParams" after the reads.go/
+      diagnostics.go surgery
+- [X] Polished template whitespace (removed a stray leading blank line
+      inside each generated struct body before the first field)
+- [X] Performed the migration surgery: removed every migrated type/enum
+      declaration from types.go, reads.go, workspacesymbol.go, lifecycle.go,
+      diagnostics.go, replacing with a one-line pointer to types_gen.go +
+      cmd/lspgen/config.go; added pkg/lsp/generate.go carrying the
+      //go:generate wiring
+- [X] Verified DETERMINISM two ways: cmd/lspgen's own test (two in-process
+      Generate() calls, byte-equal) AND two independent `go generate`
+      process invocations diffed byte-for-byte clean
+- [X] Full check-suite gate GREEN on both modules: build, vet, lint
+      (golangci-lint 0 issues each), govulncheck (none each), all tests
+      pass UNCHANGED (root pkg/lsp cov 92.5%, org-lsp pkg/orglsp cov 89.4%)
+- [X] Reconfirmed the zero-dependency invariant: no go.sum at root,
+      `go list -deps ./cmd/lspgen/...` shows only stdlib (go/format's own
+      internal deps: go/ast, go/parser, go/printer, go/scanner,
+      go/doc/comment, crypto/internal/*, unicode/utf8 — no third-party
+      module), org-lsp still invisible from root `go list ./...`
+- [X] Updated README.org: new "Codegen" section (pin, generator, what's
+      generated vs hand-kept and why, drop-in claim) + a Roadmap checkbox
+
+** Next Steps
+- [ ] If a future consumer needs LocationLink (generated but unused today —
+      this client doesn't advertise linkSupport) wire it into Client.Definition
+- [ ] If markupMessageSupport is ever advertised, revisit the
+      Diagnostic.message override (currently forced to string)
+- [ ] Tags/CodeDescription/Data are natural next allowlist entries for
+      Diagnostic if a consumer needs them (deliberately deferred this pass —
+      the todo asked for "+related" specifically, not the full 3.16+ surface)
+
+* Session Topic
+Implement mgmt 8a6c4d87: generate lspbridge's pkg/lsp protocol types from the
+pinned LSP 3.18 metaModel.json via a new stdlib-only cmd/lspgen generator,
+because the hand-written todo's own trigger fired — the method surface grew
+past the "~5 more methods" threshold (lifecycle + documentSymbol/references/
+definition/hover/rename/foldingRange/workspace-symbol + publishDiagnostics).
+Must be a strict drop-in: zero behavior change, every existing test in both
+the root module and the org-lsp nested module passes unchanged.
+
+* Decisions Made
+- *Types only, no method bindings.* The original todo's context mentions
+  "types+method bindings"; this session's actual instructions scope it to
+  types. Client's request methods (DocumentSymbol, References, Definition,
+  Hover, Rename, FoldingRange, WorkspaceSymbol) and their null/polymorphic
+  decoding helpers stay 100% hand-written — that's behavior/judgment
+  (discrimination, normalization), never a mechanical data shape.
+- *A configured allowlist, not the whole 387-structure metaModel.* Per the
+  todo's own instruction. cmd/lspgen/config.go is the single source of
+  truth for which structures/enums generate, in what field subset/order,
+  and with what per-field overrides — and carries the full exclusion
+  rationale as its header doc comment so the "why" travels with the code,
+  not just this session trace.
+- *Extends always flattens in fully; mixins never auto-include.* The
+  metaModel distinguishes real inheritance (extends — SymbolInformation
+  IS-A BaseSymbolInformation) from additive traits mixed into dozens of
+  unrelated Params types (WorkDoneProgressParams/PartialResultParams, for
+  progress-token support lspbridge's client never sends). One blanket rule
+  — flatten extends, drop mixins — reproduced the pre-existing hand-written
+  field set for EVERY *Params type checked, with no per-type exclude list
+  needed.
+- *Per-field overrides are declared, not improvised, and always carry a
+  reason string rendered into the generated file's doc comment.* Six
+  fields needed one: Diagnostic.code (int|string -> any, matches the
+  pre-existing hand-written type), Diagnostic.message (3.18 widened this to
+  string|MarkupContent behind a capability lspbridge doesn't advertise ->
+  kept string), MarkupContent.kind and TextDocumentItem.languageId (both
+  reference open string enums in spec, but every real call site
+  — pyright.go, broker.go, existing tests — passes/compares a plain string
+  local, so the enum reference would be a breaking type change -> kept
+  string), FoldingRange.start/endCharacter (spec optional-uinteger, but 0 is
+  a meaningful value distinct from "unset" -> kept the pre-existing *int
+  pointer override), InitializeResult.capabilities (kept raw json.RawMessage
+  rather than modeling ServerCapabilities, by far the largest structure in
+  the whole metaModel).
+- *Five types stay fully hand-written*, each because it carries genuine
+  behavior (a custom UnmarshalJSON normalizing a polymorphic or
+  multi-wire-form field) or is an invented shape with no metaModel
+  structure of its own: WorkspaceEdit (+ TextDocumentEdit /
+  OptionalVersionedTextDocumentIdentifier), Hover, TextDocumentContentChangeEvent,
+  DocumentSymbolResult, InitializeParams. Full rationale for each lives in
+  cmd/lspgen/config.go's header comment (DRY: not re-explained per-file).
+- *Diagnostic gains RelatedInformation (+ the new DiagnosticRelatedInformation
+  type), and nothing else new*, deliberately matching the todo's explicit
+  "Diagnostic(+related)" instruction rather than adding Tags/CodeDescription/
+  Data too (all equally mechanical, all left as a documented next step) —
+  scope discipline over "generate everything spec allows."
+- *LocationLink is generated as new, unused surface* (the todo's own
+  allowlist names it explicitly as near-term). Client.Definition doesn't
+  advertise linkSupport so no server sends it today; it costs nothing to
+  have the type ready.
+- *Determinism is a hard requirement, verified two ways*: an in-process
+  test (Generate() called twice, byte-equal) is necessary but not
+  sufficient on its own to prove `go generate` itself is stable across
+  process boundaries (e.g. map-iteration nondeterminism wouldn't
+  necessarily show up the same way) — so the session additionally ran two
+  independent `go generate` process invocations and diffed the output
+  byte-for-byte.
+- *No integration worktree; direct --ff-only merge onto primary's main*,
+  matching the immediately preceding org-lsp session's own precedent for
+  this same repo (no remote configured; a separate integration/<date>
+  worktree adds no value for a single linear feature landing solo).
+
+* Files Touched
+- cmd/lspgen/metaModel.json (new; vendored pin, sha256 caae8df6...)
+- cmd/lspgen/metamodel.go, config.go, generate.go, main.go, generate_test.go (new)
+- pkg/lsp/generate.go (new; go:generate wiring)
+- pkg/lsp/types_gen.go (new; DO-NOT-EDIT generated output)
+- pkg/lsp/types.go (surgery: kept DocumentURI + WorkspaceEdit only)
+- pkg/lsp/reads.go (surgery: kept DocumentSymbolResult, Hover family,
+  Client methods, isJSONNull/firstToken/bytesTrimSpace helpers, method
+  name consts)
+- pkg/lsp/workspacesymbol.go (surgery: kept the method-name const + Client.WorkspaceSymbol)
+- pkg/lsp/lifecycle.go (surgery: kept InitializeParams + TextDocumentContentChangeEvent only)
+- pkg/lsp/diagnostics.go (surgery: kept DiagnosticsCollector + consts)
+- README.org (new Codegen section + Roadmap checkbox)
+
+* Work Completed
+- Full gate green on both modules: build/vet clean, golangci-lint 0 issues
+  each, govulncheck none each, ALL pre-existing tests pass UNCHANGED (root
+  pkg/lsp cov 92.5%, org-lsp pkg/orglsp cov 89.4%).
+- Determinism proven at the process level, not just in-process: two
+  separate `go generate ./pkg/lsp/...` invocations produced byte-identical
+  pkg/lsp/types_gen.go (sha256 matched across both).
+- Root zero-dependency invariant reconfirmed: no go.sum at repo root;
+  `go list -deps ./cmd/lspgen/...` resolves to stdlib only.
+- Generated output verified field-exact against the pre-existing
+  hand-written types for every type that already existed (same Go type,
+  same json tag, same optionality/pointer semantics) — the only additions
+  are the new LocationLink type and Diagnostic.RelatedInformation +
+  DiagnosticRelatedInformation, both purely additive.
+
+* Glossary
+- metaModel.json :: the LSP project's own machine-readable protocol
+  description (structures/enumerations/typeAliases/requests/notifications);
+  source of truth this generator reads instead of hand-transcribing types
+- allowlist :: cmd/lspgen/config.go's structConfigs/enumConfigs — the
+  deliberately small subset of the metaModel's 387 structures this
+  generator actually emits
+- fieldOverride :: a config.go entry that replaces the mechanically-resolved
+  Go type for one "Structure.property" with an explicit type + a reason
+  string, used only where the default rule would break an existing call
+  site or overreach into unmodeled spec surface
+- extends vs mixins :: the metaModel's own distinction between real
+  inheritance (flattened in fully by this generator) and additive
+  progress-token traits (never auto-included)
+- drop-in :: this migration's hard constraint — every pre-existing test,
+  in both lspbridge modules, must pass completely unchanged
+
+* Index
+- generator allowlist + exclusion rationale → file:cmd/lspgen/config.go
+- resolution engine (flatten/override/resolve) → file:cmd/lspgen/generate.go
+- generated output → file:pkg/lsp/types_gen.go
+- go:generate wiring → file:pkg/lsp/generate.go
+- README codegen section → [[file:README.org::* Codegen: pkg/lsp types from the LSP metaModel (mgmt 8a6c4d87)][README.org]]
+- prior related session (org-lsp, cross-refs this todo) → [[id:lspbridge-2026-07-18-main]]
+
+* Cross-References
+- mgmt todo implemented: 8a6c4d87 (this repo, marked done)
+- Cross-ref'd by: mcp 85e6744 (strata survey, origin of this todo)
+- Prior session: [[id:lspbridge-2026-07-18-main]] (org-lsp, mgmt 6131a2a1 —
+  named this todo as still-open follow-up)
+- Registry: [[file:~/org/claude/Project-Registry.org]]
+
+* Footnotes
+[fn:1] LSP 3.18.0 metaModel.json, fetched directly:
+       https://raw.githubusercontent.com/microsoft/language-server-protocol/gh-pages/_specifications/lsp/3.18/metaModel/metaModel.json
+       sha256 caae8df639a4248520a3f589fd72945365e9d8ebca5baf564161a515430d9d41,
+       2026-07-18. Diagnostic.message's LSP-3.18 widening to
+       string | MarkupContent (behind textDocument.diagnostic.markupMessageSupport)
+       was read directly from this fetch's Diagnostic.message property
+       documentation string, not recalled.
