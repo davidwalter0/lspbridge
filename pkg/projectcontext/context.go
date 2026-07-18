@@ -63,12 +63,26 @@ type MarkerResolver struct {
 	Language   string   // the LSP languageId to stamp on the Context
 	Extensions []string // file extensions this resolver claims, e.g. []string{".py"}
 	Markers    []string // root-marker filenames, most-specific first
+
+	// LanguageFor, if non-nil, derives the LSP languageId from the matched
+	// file's extension instead of the fixed Language above. This exists for
+	// language families whose LSP languageId varies by extension within the
+	// same resolver — e.g. TypeScript's JSX-flavored ".tsx" is
+	// "typescriptreact", not "typescript" (see [TypeScriptResolver] /
+	// [JavaScriptResolver]). Nil means every matched extension uses Language
+	// unchanged, preserving every existing preset's behavior.
+	LanguageFor func(ext string) string
 }
 
 // Resolve implements [Resolver].
 func (r MarkerResolver) Resolve(absPath string) (Context, bool) {
-	if !slices.Contains(r.Extensions, filepath.Ext(absPath)) {
+	ext := filepath.Ext(absPath)
+	if !slices.Contains(r.Extensions, ext) {
 		return Context{}, false
+	}
+	lang := r.Language
+	if r.LanguageFor != nil {
+		lang = r.LanguageFor(ext)
 	}
 	start := filepath.Dir(absPath)
 	root, ok := FindUp(start, r.Markers...)
@@ -83,7 +97,7 @@ func (r MarkerResolver) Resolve(absPath string) (Context, bool) {
 			break
 		}
 	}
-	return Context{Root: root, Language: r.Language, ConfigPath: cfg}, true
+	return Context{Root: root, Language: lang, ConfigPath: cfg}, true
 }
 
 // PythonResolver resolves Python files by pyright/project markers. It is a
@@ -94,6 +108,73 @@ func PythonResolver() MarkerResolver {
 		Extensions: []string{".py", ".pyi"},
 		Markers:    []string{"pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg"},
 	}
+}
+
+// nodeMarkers is the root-marker precedence shared by TypeScriptResolver and
+// JavaScriptResolver: a tsconfig.json is the most specific signal (even in a
+// JS project, e.g. one using `allowJs` for editor tooling), then a plain
+// jsconfig.json, then — the loosest signal — a bare package.json.
+var nodeMarkers = []string{"tsconfig.json", "jsconfig.json", "package.json"}
+
+// TypeScriptResolver resolves TypeScript-family files (.ts, .tsx, .mts,
+// .cts) by walking up for the first of nodeMarkers. The LSP languageId is
+// "typescript" for every extension except ".tsx", which uses
+// "typescriptreact" — the identifier the LSP spec and
+// typescript-language-server expect for JSX-flavored TypeScript (verified
+// against the LSP 3.17 specification's language-identifier table).
+func TypeScriptResolver() MarkerResolver {
+	return MarkerResolver{
+		Language:   "typescript",
+		Extensions: []string{".ts", ".tsx", ".mts", ".cts"},
+		Markers:    nodeMarkers,
+		LanguageFor: func(ext string) string {
+			if ext == ".tsx" {
+				return "typescriptreact"
+			}
+			return "typescript"
+		},
+	}
+}
+
+// JavaScriptResolver resolves JavaScript-family files (.js, .mjs, .cjs,
+// .jsx) by the same marker precedence as [TypeScriptResolver] — a
+// JavaScript-only project may still carry a tsconfig.json (for `allowJs`
+// editor tooling) or a plain jsconfig.json, and either should still win over
+// a bare package.json. The LSP languageId is "javascript" for every
+// extension except ".jsx", which uses "javascriptreact" by the same
+// reasoning TypeScriptResolver applies to ".tsx" (both identifiers are in
+// the LSP spec's language-identifier table).
+func JavaScriptResolver() MarkerResolver {
+	return MarkerResolver{
+		Language:   "javascript",
+		Extensions: []string{".js", ".mjs", ".cjs", ".jsx"},
+		Markers:    nodeMarkers,
+		LanguageFor: func(ext string) string {
+			if ext == ".jsx" {
+				return "javascriptreact"
+			}
+			return "javascript"
+		},
+	}
+}
+
+// RustResolver resolves Rust files (.rs) by walking up for Cargo.toml, the
+// crate/workspace root marker rust-analyzer keys its analysis on.
+func RustResolver() MarkerResolver {
+	return MarkerResolver{
+		Language:   "rust",
+		Extensions: []string{".rs"},
+		Markers:    []string{"Cargo.toml"},
+	}
+}
+
+// DefaultChain returns the resolver chain for every language lspbridge
+// supports out of the box, tried in this order: Python, TypeScript,
+// JavaScript, Rust. It is the broker's default Config.Resolver. Each
+// resolver claims a disjoint Extensions set, so no file can match more than
+// one — the order only affects readability, not correctness.
+func DefaultChain() Chain {
+	return Chain{PythonResolver(), TypeScriptResolver(), JavaScriptResolver(), RustResolver()}
 }
 
 // Chain tries each resolver in order and returns the first match.

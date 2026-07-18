@@ -1,0 +1,185 @@
+:PROPERTIES:
+:ID:       lspbridge-2026-07-18-feat-server-presets
+:END:
+#+title: Session 2026-07-18 — lspbridge/feat-server-presets (server presets + Node ProjectContext)
+#+date: 2026-07-18
+
+* Session State
+:PROPERTIES:
+:LAST_UPDATED: 2026-07-18
+:END:
+** Status
+Landed. TypeScript/JavaScript/Rust presets + Node ProjectContext seam done:
+=projectcontext.TypeScriptResolver=/=JavaScriptResolver=/=RustResolver=/=DefaultChain=,
+=server.TypeScriptLanguageServerSpec=/=RustAnalyzerSpec=, and
+=broker.DefaultSpecFor= routing for all four languages. Gate GREEN
+(build/vet/lint 0/vuln clean, cov TOTAL 92.3%), zero-dep invariant verified
+(no go.sum, empty =go mod graph=). LIVE proofs all ran LIVE (not skipped):
+pyright 1.1.411, typescript-language-server 4.3.4, rust-analyzer 1.93.1 are
+all installed on this host.
+** Completed
+- [X] =projectcontext.MarkerResolver= gained an optional =LanguageFor(ext)=
+      hook (nil preserves every prior preset unchanged)
+- [X] =TypeScriptResolver()= (.ts/.tsx/.mts/.cts; tsconfig.json > jsconfig.json
+      > package.json; "typescript"/"typescriptreact")
+- [X] =JavaScriptResolver()= (.js/.mjs/.cjs/.jsx; same marker precedence;
+      "javascript"/"javascriptreact")
+- [X] =RustResolver()= (.rs; Cargo.toml)
+- [X] =DefaultChain()= = python + typescript + javascript + rust; now the
+      broker's default =Config.Resolver=
+- [X] =server.TypeScriptLanguageServerSpec= (`typescript-language-server
+      --stdio`) and =server.RustAnalyzerSpec= (`rust-analyzer`, no flags)
+- [X] Shared =missingBinaryError= helper: names
+      `exttool install --tool NAME --confirm` WITHOUT importing exttool
+      (would break the zero-=go.sum= invariant)
+- [X] =broker.DefaultSpecFor= routes typescript/typescriptreact/javascript/
+      javascriptreact → typescript-language-server, rust → rust-analyzer
+- [X] LIVE: =pkg/server= tsserver documentSymbol proof (=[greet main]=)
+- [X] LIVE: =pkg/broker= end-to-end proof — ALL-DEFAULT =broker.Config{}=
+      (real DefaultChain + DefaultSpecFor) over a real unix socket against a
+      package.json+tsconfig.json fixture — Node ProjectContext through the
+      broker
+- [X] LIVE: =pkg/server= rust-analyzer documentSymbol proof (=[greet main]=,
+      0.4s — no cold-index wait needed for a tiny std-only crate)
+- [X] Full gate: build/vet/golangci-lint(0)/govulncheck(0)/test all green;
+      cov TOTAL 92.3% (projectcontext 100%, server 86.0%, broker 93.0%)
+- [X] Zero-dep invariant reverified: no go.sum, `go mod graph` shows only
+      the module + Go toolchain, no external entries
+** Next Steps
+- [ ] ae WRITE VERBS calling broker.Client (rename → WorkspaceEdit →
+      wsedit.FromWorkspaceEdit → ae transaction.Plan) — separate repo/change
+- [ ] mcp-ast semantic tool group: extend beyond python now that
+      typescript/javascript/rust specs exist server-side (mcp-ast f51cf319
+      progress note: "only Python is wired end-to-end" — that gap is now on
+      lspbridge's side closed; mcp-ast's own consumer wiring is a separate PR)
+- [ ] metaModel codegen 8a6c4d87 trigger noted in f51cf319 remains open
+      (unrelated to this session's scope)
+- [ ] exttool cross-repo wiring (mgmt 1b46153a Next Steps) still not done —
+      this session deliberately did NOT import exttool (see Decisions Made)
+
+* Session Topic
+Implement the remaining lspbridge server presets + Node ProjectContext: the
+lspbridge side of mgmt c8d915b0 parts (b) [partially — the semantic-server
+wiring itself; ae's own write-verb consumption is separate] and (c) [Node
+ProjectContext seam], plus f51cf319's remaining item (2) "DefaultSpecFor
+presets beyond python (tsserver, rust-analyzer)". Root module stays
+zero-dependency throughout.
+
+* Decisions Made
+- *Extend =MarkerResolver= with =LanguageFor= rather than a new resolver type.*
+  TypeScript/JSX need a per-extension languageId (tsx→typescriptreact,
+  jsx→javascriptreact) that a single fixed =Language= field can't express. A
+  parallel type would duplicate the FindUp/marker-walk logic; a nil-safe
+  optional field keeps every existing =MarkerResolver= user (PythonResolver,
+  any external caller) byte-for-byte unchanged. Verified via WebFetch of the
+  LSP 3.17 spec's language-identifier table: "typescript"/"typescriptreact"/
+  "javascript"/"javascriptreact"/"rust" are exactly the values documented
+  there — not a guess.
+- *Shared tsconfig.json > jsconfig.json > package.json marker precedence for
+  BOTH TypeScriptResolver and JavaScriptResolver* (=nodeMarkers=): a
+  JavaScript-only project may still carry a tsconfig.json for `allowJs`
+  editor tooling, so the more-specific config should win even when resolving
+  a .js file.
+- *No exttool dependency, ever, in lspbridge.* exttool
+  (github.com/davidwalter0/exttool) declares/resolves/installs
+  typescript-language-server and rust-analyzer with real version pins (see
+  its =pkg/manifest.DefaultManifest=), but it has its own go.sum. Importing
+  =github.com/davidwalter0/exttool= (the root package with =Require=) would
+  pull that in and break lspbridge's zero-external-dependency invariant. The
+  compromise: =missingBinaryError= only *names* the remediation command
+  (`exttool install --tool NAME --confirm`) as a string — no import, no
+  shell-out, no version number duplicated (so it can never drift out of sync
+  with exttool's manifest pins the way a hardcoded copy would).
+- *rust-analyzer Spec passes no arguments.* Confirmed via
+  `rust-analyzer --help`: unlike pyright/typescript-language-server, running
+  the bare binary with no subcommand IS the LSP-over-stdio mode; its
+  subcommands are parser/debug utilities, not alternate transports.
+- *tsserver's broker proof is the one that must go "through the broker";
+  rust-analyzer's does not (per the task's own framing).* Implemented
+  accordingly: =pkg/broker/broker_tsserver_live_test.go= dials a REAL unix
+  socket with an ALL-DEFAULT =broker.Config{}= to prove
+  =projectcontext.DefaultChain= + =broker.DefaultSpecFor= resolve a Node
+  project end-to-end; rust-analyzer's proof stays at the simpler
+  =pkg/server= layer (direct Launch+Initialize+DocumentSymbol), which also
+  reduces flake surface for a server known to be slow to index. Empirically,
+  on this host, rust-analyzer answered documentSymbol for a tiny std-only
+  crate in 0.4s with no indexing wait — but the honest-skip-not-fail
+  fallback (a generous 90s deadline, then =t.Skip=, not =t.Fatal=) is
+  implemented anyway per the task's explicit caution, since a cold/slow host
+  could differ.
+- *No pyright.go changes.* The task asked for the exttool-hint error text on
+  the two NEW specs only; retrofitting =PyrightSpec='s error text was out of
+  scope and left untouched to keep the diff minimal.
+
+* Files Touched
+- pkg/projectcontext/context.go (LanguageFor field; TypeScriptResolver,
+  JavaScriptResolver, RustResolver, DefaultChain)
+- pkg/projectcontext/context_test.go (LanguageFor + all four new presets +
+  DefaultChain tests)
+- pkg/server/tsserver.go (new: TypeScriptLanguageServerCommand/Spec)
+- pkg/server/rustanalyzer.go (new: RustAnalyzerCommand/Spec)
+- pkg/server/exttool.go (new: missingBinaryError shared helper)
+- pkg/server/tsserver_test.go (new: missing-binary + found-shape unit tests)
+- pkg/server/rustanalyzer_test.go (new: missing-binary + found-shape unit tests)
+- pkg/server/tsserver_live_test.go (new: LIVE tsserver documentSymbol proof)
+- pkg/server/rustanalyzer_live_test.go (new: LIVE rust-analyzer documentSymbol
+  proof, generous timeout + honest skip)
+- pkg/broker/broker.go (DefaultSpecFor routes ts/js/rust; default resolver ->
+  DefaultChain)
+- pkg/broker/broker_test.go (TestDefaultSpecFor extended to all 4 languages)
+- pkg/broker/broker_tsserver_live_test.go (new: LIVE broker end-to-end Node
+  ProjectContext proof)
+- README.org (roadmap entry; make test comment; project-scope paragraph)
+
+* Work Completed
+- Full gate green: CGO_ENABLED=0 (implicit — module never sets it, so the
+  default toolchain behavior applies unchanged) build, vet, golangci-lint 0
+  issues, govulncheck none, tests all green (no skips — every server binary
+  was present), cov TOTAL 92.3%.
+- Zero-dependency invariant reverified: no go.sum on disk, `go mod graph`
+  shows only `github.com/davidwalter0/lspbridge go@1.25` +
+  `go@1.25 toolchain@go1.25` (the two dotted `go list -deps` hits that look
+  external — vendor/golang.org/x/net/dns/dnsmessage,
+  crypto/internal/entropy/v1.0.0 — are GOROOT-internal stdlib paths, not
+  module dependencies).
+- Worktree merged --ff-only to main locally (no push — repo has no remote).
+
+* LIVE proof outputs
+- pkg/server tsserver documentSymbol → =[greet main]= (hierarchical=2), 0.55s
+- pkg/broker tsserver end-to-end (Node ProjectContext through the broker) →
+  =[greet main]=, session Language="typescript" Root=<fixture dir>, 1.9s
+- pkg/server rust-analyzer documentSymbol → =[greet main]= (hierarchical=2),
+  0.4s (no indexing wait needed for a tiny std-only crate)
+
+* Glossary
+- Node ProjectContext :: the (tsconfig.json | jsconfig.json | package.json)
+  root/config discovery seam for the JS/TS family, the Node-specific
+  instance of the generic projectcontext.Resolver seam
+- LanguageFor :: MarkerResolver's optional per-extension languageId hook
+  (nil = fixed Language, as before)
+- languageId :: the LSP TextDocumentItem field; "typescriptreact"/
+  "javascriptreact" are the JSX-flavored variants per the LSP spec
+- exttool :: github.com/davidwalter0/exttool, this ecosystem's declared
+  non-Go tool installer/pin-tracker; lspbridge names its remediation command
+  but never imports it
+
+* Index
+- resolver presets → file:pkg/projectcontext/context.go
+- launch specs → file:pkg/server/tsserver.go, file:pkg/server/rustanalyzer.go
+- missing-binary error convention → file:pkg/server/exttool.go
+- broker wiring → file:pkg/broker/broker.go
+- Node ProjectContext broker proof → file:pkg/broker/broker_tsserver_live_test.go
+
+* Cross-References
+- lspbridge side of: mgmt c8d915b0 (mcp-agent-editor) parts (b)+(c)
+- Closes: mgmt f51cf319 (mcp-ast) remaining item (2) "DefaultSpecFor presets
+  beyond python"
+- exttool manifest entries consumed by name only (no import): mgmt 1b46153a
+  (github.com/davidwalter0/exttool), see its README.org "Root package
+  exttool" section
+- Prior session: [[id:lspbridge-2026-07-18-feat-broker]] (its own Next Steps
+  named exactly this: "Additional language presets in DefaultSpecFor
+  (tsserver, rust-analyzer)")
+- Ecosystem design doc: [[file:~/go/src/github.com/davidwalter0/mcp/docs/ecosystem/design/ecosystem-language-tooling-matrix.org]]
+
+* Footnotes

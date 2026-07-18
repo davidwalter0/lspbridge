@@ -269,10 +269,13 @@ func TestQueryRequiresMethod(t *testing.T) {
 }
 
 func TestDefaultSpecFor(t *testing.T) {
-	if _, err := DefaultSpecFor(projectcontext.Context{Language: "python", Root: "/p"}); err != nil {
-		// pyright may be absent; a LookPath error is still an error, so only
-		// assert that an unknown language errors distinctly below.
-		t.Logf("python spec (pyright maybe absent): %v", err)
+	// One underlying server binary may be absent on a given host; a LookPath
+	// error is still an "error", so this only logs for the known languages
+	// and asserts distinctly that an unknown language always errors below.
+	for _, lang := range []string{"python", "typescript", "typescriptreact", "javascript", "javascriptreact", "rust"} {
+		if _, err := DefaultSpecFor(projectcontext.Context{Language: lang, Root: "/p"}); err != nil {
+			t.Logf("%s spec (server maybe absent): %v", lang, err)
+		}
 	}
 	if _, err := DefaultSpecFor(projectcontext.Context{Language: "cobol", Root: "/p"}); err == nil {
 		t.Error("unknown language should error")

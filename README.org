@@ -30,7 +30,10 @@ Two layers (this repo builds them bottom-up):
 
 The per-language project scope is discovered through the =pkg/projectcontext=
 seam (tsconfig.json / pubspec.yaml / compile_commands.json / pyrightconfig /
-Cargo.toml), which generalizes the C/C++ include-context resolver.
+Cargo.toml), which generalizes the C/C++ include-context resolver. Four
+presets are wired end-to-end today — Python (pyright), TypeScript/JavaScript
+(typescript-language-server), and Rust (rust-analyzer); C/C++/Dart/pubspec
+remain aspirational entries in that list until their own presets land.
 
 * Roadmap (mgmt f51cf319, P0 keystone)
 - [X] P0.1 JSON-RPC 2.0 stdio transport (=pkg/jsonrpc=)
@@ -64,6 +67,39 @@ Cargo.toml), which generalizes the C/C++ include-context resolver.
 - [X] Codegen: =pkg/lsp= data types generated from the pinned LSP 3.18
   metaModel.json instead of hand-transcribed (mgmt 8a6c4d87) — see
   "Codegen" below.
+- [X] Server presets beyond Python + Node ProjectContext (mgmt f51cf319
+  remaining items (2)+(3); lspbridge side of mgmt c8d915b0 parts (b)+(c)):
+  =projectcontext.TypeScriptResolver= / =JavaScriptResolver= (.ts/.tsx/.mts/.cts
+  and .js/.mjs/.cjs/.jsx; marker precedence tsconfig.json > jsconfig.json >
+  package.json; languageId "typescript"/"javascript", switching to
+  "typescriptreact"/"javascriptreact" for the JSX-flavored extensions per the
+  LSP spec's language-identifier table) and =RustResolver= (Cargo.toml); the
+  =MarkerResolver= type grew an optional =LanguageFor(ext)= hook to let one
+  resolver vary its languageId per extension (nil preserves every prior
+  preset's behavior unchanged). =projectcontext.DefaultChain()= composes all
+  four (python, typescript, javascript, rust) and is now the broker's default
+  resolver. =server.TypeScriptLanguageServerSpec= (`typescript-language-server
+  --stdio`; one process serves the whole JS/TS family) and
+  =server.RustAnalyzerSpec= (`rust-analyzer`, no flags — LSP-over-stdio is its
+  only mode) join =PyrightSpec= as launch presets; their missing-binary errors
+  name the =exttool install --tool NAME --confirm= remediation (exttool is
+  this ecosystem's declared non-Go-tool installer) WITHOUT lspbridge
+  importing exttool itself — that would add a dependency and break the
+  zero-=go.sum= invariant, so the message only names the fix. =broker.DefaultSpecFor=
+  now routes typescript/typescriptreact/javascript/javascriptreact →
+  typescript-language-server and rust → rust-analyzer alongside the existing
+  python → pyright case. LIVE proofs (skip-if-absent, all ran live against
+  typescript-language-server 4.3.4 and rust-analyzer 1.93.1 on the
+  development host): a =pkg/server=-level tsserver documentSymbol proof and a
+  =pkg/broker=-level end-to-end proof — an ALL-DEFAULT =broker.Config{}= (real
+  =DefaultChain= + =DefaultSpecFor=, no test-only wiring) dials over a real unix
+  socket against a fixture with package.json+tsconfig.json, proving the Node
+  ProjectContext seam end-to-end through the broker exactly as a real
+  consumer would exercise it; and a =pkg/server=-level rust-analyzer
+  documentSymbol proof over a tiny cargo project (generous timeout, skips
+  rather than fails if indexing is still cold at the deadline — rust-analyzer's
+  cargo metadata/check warm-up is host- and cache-dependent, so a still-empty
+  result there is "could not verify in budget," not a defect).
 
 * Design
 Full design: =mcp/docs/ecosystem/design/ecosystem-language-tooling-matrix.org=
@@ -133,7 +169,7 @@ hand-written =pkg/lsp= doc comment flagged.
 
 * Build
 : make build     # compile all (incl. cmd/lspbroker daemon)
-: make test      # unit tests (live pyright proofs skip when pyright absent)
+: make test      # unit tests (live pyright/tsserver/rust-analyzer proofs skip when absent)
 : make check     # lint + vet + vuln + test + cov (the check-suite gate)
 : make cov       # per-package coverage table
 

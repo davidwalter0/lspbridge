@@ -37,23 +37,30 @@ const (
 type SpecFunc func(pc projectcontext.Context) (server.Spec, error)
 
 // DefaultSpecFor maps a Context to a launch Spec for the languages lspbridge
-// supports out of the box: python → pyright. Unknown languages are an error
-// (the broker cannot activate a session it has no server for).
+// supports out of the box: python → pyright; typescript / typescriptreact /
+// javascript / javascriptreact → typescript-language-server (one process
+// serves the whole JS/TS family — see [server.TypeScriptLanguageServerSpec]);
+// rust → rust-analyzer. Unknown languages are an error (the broker cannot
+// activate a session it has no server for).
 func DefaultSpecFor(pc projectcontext.Context) (server.Spec, error) {
 	switch pc.Language {
 	case "python":
 		return server.PyrightSpec(pc.Root)
+	case "typescript", "typescriptreact", "javascript", "javascriptreact":
+		return server.TypeScriptLanguageServerSpec(pc.Root)
+	case "rust":
+		return server.RustAnalyzerSpec(pc.Root)
 	default:
 		return server.Spec{}, fmt.Errorf("broker: no language server configured for %q", pc.Language)
 	}
 }
 
 // Config configures a [Broker]. The zero value is usable: every field has a
-// sane default (Python-via-pyright resolver + spec, 10-minute idle timeout,
-// real clock, discarded server stderr).
+// sane default ([projectcontext.DefaultChain] resolver + [DefaultSpecFor],
+// 10-minute idle timeout, real clock, discarded server stderr).
 type Config struct {
 	// Resolver maps a source file to its project Context. Default:
-	// Chain{PythonResolver()}.
+	// [projectcontext.DefaultChain] (python, typescript, javascript, rust).
 	Resolver projectcontext.Resolver
 	// SpecFor maps a Context to its launch Spec. Default: DefaultSpecFor.
 	SpecFor SpecFunc
@@ -118,7 +125,7 @@ func New(cfg Config) *Broker {
 		sessions:    make(map[string]*session),
 	}
 	if b.resolver == nil {
-		b.resolver = projectcontext.Chain{projectcontext.PythonResolver()}
+		b.resolver = projectcontext.DefaultChain()
 	}
 	if b.specFor == nil {
 		b.specFor = DefaultSpecFor
