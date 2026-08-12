@@ -1,0 +1,167 @@
+:PROPERTIES:
+:ID:       lspbridge-2026-08-12-feat-service-packaging
+:END:
+#+title: Session 2026-08-12 — lspbridge/feat-service-packaging (systemd unit + doctor)
+#+date: 2026-08-12
+
+* Session State
+:PROPERTIES:
+:LAST_UPDATED: 2026-08-12
+:END:
+** Status
+Landed locally on =feat/service-packaging=, not pushed, no PR. Gate: pending
+final =make check= run (see Work Completed for interim per-step results).
+Nothing installed/enabled/started on the host; no systemd unit written
+outside this worktree's =packaging/= source.
+** Completed
+- [X] =packaging/lspbridge.service= — systemd =--user= unit template
+- [X] =make install-service= / =uninstall-service= — materialize + print only
+- [X] =cmd/lspdoctor= (+ =make doctor=) — binary/service/socket-path checks
+- [X] Socket-path divergence root-caused as TWO env vars (XDG_RUNTIME_DIR
+  *and* TMPDIR), not one; fixed at both the Makefile derivation and
+  doctor's own comparison; regression pinned in
+  =TestConsumerSocketPathIgnoresTMPDIR=
+- [X] Live end-to-end probe added to doctor per mid-task coordinator
+  addition (documentSymbol -> references via SelectionRange, never a
+  hand-picked position)
+- [X] Verified live against the real broker already running on this host
+  (PID 534840 at measurement time): cold probe ~4.6s / 3 locations, warm
+  re-run ~0.13s
+- [X] =docs/design/broker-lifecycle-and-socket-path.org= written
+** Next Steps
+- [ ] Run the full =make check= gate and commit (this session, next step)
+- [ ] User decides whether to install/enable the unit
+- [ ] mcp-ast todo =714a9133= (the null-response fix itself) is out of scope
+  here and untouched
+
+* Session Topic
+Give the =lspbroker= daemon an owner: a systemd =--user= unit (materialize
+only, never activate), install/uninstall Make targets, and a =make doctor=
+diagnostic that catches the specific outage class that made the semantic
+tier look absent for a multi-day session — a socket-path mismatch between
+the daemon's default and what mcp-ast/ae actually dial, PLUS (added
+mid-task) a null-response ambiguity that can make a WORKING daemon look
+broken even once the path is right.
+
+* Files Touched
+- packaging/lspbridge.service (new)
+- Makefile (install-service / uninstall-service / doctor targets + bin/
+  build rules; clean now also removes bin/)
+- cmd/lspdoctor/main.go (new)
+- cmd/lspdoctor/checks.go (new)
+- cmd/lspdoctor/checks_test.go (new)
+- cmd/lspdoctor/probe.go (new)
+- cmd/lspdoctor/probe_test.go (new)
+- docs/design/broker-lifecycle-and-socket-path.org (new)
+- docs/sessions/2026-08-12-feat-service-packaging.org (this file)
+
+* Decisions Made
+- *Plain always-on service, not socket activation.* =lspbroker= has no
+  =LISTEN_FDS= handling (verified by reading =cmd/lspbroker/main.go= and
+  =pkg/broker/socket.go= in full); =Accept=no= would hand it descriptors it
+  ignores. Socket activation stays a documented future option, not
+  implemented here. See design doc §3.
+- *The socket path is pinned explicitly in the unit*, computed from a
+  literal =/tmp=-rooted formula in the Makefile, cross-checked by
+  =cmd/lspdoctor='s independently-derived value (never a hand-copied
+  formula in two places that can drift). See design doc §4.
+- *=Environment=PATH=__PATH__= is captured from the installing shell*, not
+  invented — matches the fleet's "derive, don't hardcode" toolchain
+  convention applied to a systemd unit's spawn PATH.
+- *=make doctor='s secondary reachability check reports INFO, not FAIL*, when
+  the XDG_RUNTIME_DIR-default path is unreachable — that is the expected,
+  healthy state in a correctly-configured deployment, and styling it FAIL
+  would read as broken exactly when nothing is wrong. Added a =statusInfo=
+  level matching =mcp-gql-kit/cmd/mgk/doctor.go='s own four-way status shape.
+- *The end-to-end probe uses a FIXED fixture directory*, not a fresh temp dir
+  per run, so repeated =make doctor= calls within the broker's idle window
+  reuse an already-warm pyright session instead of leaving a new orphaned
+  process each time.
+- *Probe position is always derived from =documentSymbol='s SelectionRange,
+  never hand-picked* — this is the structural fix for the null-response
+  ambiguity (mcp-ast todo =714a9133=), applied on the diagnostic side only;
+  no mcp-ast code was touched.
+
+* Work Completed
+- =go build ./...=, =go vet ./...= clean across the whole module (both
+  =lspbridge= and the nested =org-lsp= module untouched).
+- =go test ./cmd/lspdoctor/...= — 14 tests, all passing, including two
+  regression tests written against defects found and fixed DURING this
+  session (TMPDIR-blindness in =consumerSocketPath=; shape-confusion in
+  =findSelectionRange=).
+- Live manual verification against the broker already running on this host
+  (started independently, before this session, at
+  =/tmp/lspbridge-1001/broker.sock=): =-probe=false= run showed the correct
+  PASS/INFO/PASS pattern for a healthy deployment; the full probe run
+  resolved 3 reference locations for a live =greet= fixture through real
+  pyright, cold then warm.
+- Verified live, via =/proc/1590765/environ= (the real =mcp-ast= process),
+  that the consumer's spawn environment carries neither =XDG_RUNTIME_DIR=
+  nor =TMPDIR= — the fact the whole socket-path fix depends on. Caught, in
+  the process, that MY OWN installing shell's =TMPDIR=/tmp/user/1001= would
+  have poisoned a naive shell-arithmetic formula; fixed before it shipped.
+- Full =make check= gate: see next session-trace update / commit message for
+  the final result.
+
+* Open Questions
+- Whether a future change should also declare =lspbroker= in
+  =go-version='s tool family manifest, per the mcp-ast design doc's Step 3 —
+  raised there, not decided here, and out of scope for this change.
+- Whether the =~/.local/bin= exttool-placement / daemon-PATH mismatch noted
+  in the mcp-ast design doc (§3.3, dated 2026-08-10) is still current —
+  not re-verified in this session; =Environment=PATH= in the new unit is a
+  local, install-time capture that sidesteps the question rather than
+  resolving it fleet-wide.
+
+* Tool Surface & Instrument Audit
+Single-agent session — no subagent fan-out, no Agent-tool dispatch, so the
+multi-agent grep-vs-LSP audit script (=tool-use-audit=) is not the right
+instrument here; it is built to itemize INSTRUMENT CHOICE across a fleet of
+delegated agents, and there was no fleet. Recorded manually instead, per the
+same discipline: this session used =Read= for existing source (lspbridge,
+mcp-ast, mcp-gql-kit precedents), =Bash= for build/test/live verification
+(=go build/vet/test=, =pgrep=, direct =/proc/<pid>/environ= reads), and
+=Write=/=Edit= for all new and changed files. No =grep=/=rg= was used to
+answer a structural/semantic question about this codebase — every
+capability claim in the design doc (env-var behavior, symbol-shape
+discrimination, spawn-PATH content) was settled by reading the actual
+source in full or by a live, reproducible measurement (=/proc= reads, a
+running =lspdoctor= binary against a real broker), never by text search
+standing in for either.
+
+* Glossary
+- consumer path :: the socket path mcp-ast/ae actually dial, given their
+  real mgk-filtered spawn environment (neither XDG_RUNTIME_DIR nor TMPDIR
+  set) — see design doc §4
+- divergence :: broker listening at one candidate socket path while every
+  real consumer dials a different one
+- SelectionRange :: the LSP DocumentSymbol field naming the exact identifier
+  span for a symbol; the only sound source for a diagnostic probe position
+- warm session :: an already-initialized language-server process the broker
+  keeps alive between queries, keyed on (projectRoot, language)
+
+* Index
+- Full design rationale → file:docs/design/broker-lifecycle-and-socket-path.org
+- systemd unit → file:packaging/lspbridge.service
+- install/uninstall/doctor targets → file:Makefile
+- diagnostic tool → file:cmd/lspdoctor/main.go, file:cmd/lspdoctor/checks.go, file:cmd/lspdoctor/probe.go
+- regression tests for the two bugs found mid-session → file:cmd/lspdoctor/checks_test.go, file:cmd/lspdoctor/probe_test.go
+
+* Cross-References
+- Design doc (full story, Source Verification Notes):
+  [[id:lspbridge-broker-lifecycle-and-socket-path]]
+- Origin decision (no auto-spawn): =mcp-ast/pkg/semantic/conn.go:61-75=;
+  [[id:lspbridge-2026-07-18-feat-broker]]
+- Parallel evaluation this agrees with:
+  =mcp-ast/docs/architecture/lspbroker-in-process-vs-managed-daemon.org=
+- Precedent mirrored: =mcp-gql-kit/packaging/mgk.service=,
+  =mcp-gql-kit/packaging/mgk.socket=, =mcp-gql-kit/cmd/mgk/doctor.go=
+- Null-response fix (consumer side, not this repo): mcp-ast todo =714a9133=
+
+* Footnotes
+
+[fn:1] Worktree: =.worktree/feat/service-packaging=, branch
+=feat/service-packaging=, created from local =main= at =2ea3152=
+("org-lsp: bump github.com/davidwalter0/org v0.1.0 -> v0.1.1"). Per the
+task's explicit constraints: no =git push=, no PR, no systemd
+install/enable/start, no signal sent to any running =lspbroker= process.
