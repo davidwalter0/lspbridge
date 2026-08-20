@@ -49,7 +49,21 @@ vuln-detect:
 		echo "osv-scanner not installed. Install the pinned version:"; \
 		echo "  go install github.com/google/osv-scanner/v2/cmd/osv-scanner@$(OSV_SCANNER_VERSION)"; \
 		exit 127; }
-	osv-scanner scan source -r . --no-ignore
+	@# --no-ignore is required from inside a worktree (the primary's
+	@# .gitignore excludes .worktree/, so a bare -r finds nothing: exit 128)
+	@# and wrong from the primary checkout, where it descends into every
+	@# sibling worktree and reports their stale branches. Measured in
+	@# go-version: 15 of 15 findings came from .worktree/*/go.mod while the
+	@# repo's own go.mod was clean. --experimental-exclude .worktree does
+	@# NOT fix it -- from inside a worktree that pattern matches the scan
+	@# root itself. Presence of a .worktree subdir is the discriminator.
+	@if [ -d .worktree ]; then \
+		echo 'osv-scanner scan source -r .   # primary checkout'; \
+		osv-scanner scan source -r .; \
+	 else \
+		echo 'osv-scanner scan source -r . --no-ignore   # worktree'; \
+		osv-scanner scan source -r . --no-ignore; \
+	 fi
 
 vuln-reach:
 	govulncheck ./...
