@@ -1,6 +1,6 @@
 module github.com/davidwalter0/lspbridge/org-lsp
 
-go 1.26.5
+go 1.26.7
 
 replace github.com/davidwalter0/lspbridge => ../
 
