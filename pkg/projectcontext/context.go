@@ -227,6 +227,80 @@ func AngularResolver() MarkerResolver {
 	}
 }
 
+// cMarkers is the root-marker list shared by CResolver and CppResolver: a
+// compile_commands.json is the JSON compilation database clangd consults
+// for per-file compiler flags (see server.ClangdSpec's doc comment for how
+// it is passed through once resolved).
+var cMarkers = []string{"compile_commands.json"}
+
+// CResolver resolves C source/header files (.c, .h) by walking up for
+// compile_commands.json. A bare ".h" header is inherently ambiguous between
+// C and C++ — nothing in the filename or a marker file resolves that
+// without reading the compilation database's own per-file flags — so this
+// resolver's default, like most C tooling, is that ".h" is a C header; see
+// [CppResolver] for the C++-only extensions.
+//
+// Not yet wired into [DefaultChain] / the broker's DefaultSpecFor switch
+// (package pkg/broker, outside projectcontext): this resolver exists so a
+// caller can use projectcontext.CResolver().Resolve(path) directly (as
+// server.ClangdSpec's tests do) ahead of that wiring, which is a separate,
+// deliberately out-of-scope change.
+func CResolver() MarkerResolver {
+	return MarkerResolver{
+		Language:   "c",
+		Extensions: []string{".c", ".h"},
+		Markers:    cMarkers,
+	}
+}
+
+// CppResolver resolves C++ source/header files (.cc, .cpp, .cxx, .c++, .hh,
+// .hpp, .hxx, .h++) by the same compile_commands.json marker as
+// [CResolver]. The LSP languageId is "cpp" — the identifier both the LSP
+// ecosystem and clangd itself expect (verified against the VS Code / LSP
+// language-identifier table, the same source [TypeScriptResolver]'s doc
+// comment cites for "typescriptreact").
+//
+// This is a separate function from CResolver — despite sharing cMarkers —
+// mirroring how [TypeScriptResolver] / [JavaScriptResolver] are separate
+// despite sharing nodeMarkers: one LSP languageId per resolver, even when
+// the marker set and the backing server are identical. See CResolver's doc
+// comment for the DefaultChain wiring note, which applies identically here.
+func CppResolver() MarkerResolver {
+	return MarkerResolver{
+		Language:   "cpp",
+		Extensions: []string{".cc", ".cpp", ".cxx", ".c++", ".hh", ".hpp", ".hxx", ".h++"},
+		Markers:    cMarkers,
+	}
+}
+
+// BashResolver resolves shell script files (.sh, .bash) by walking up for
+// the nearest .git directory. Unlike every other MarkerResolver preset in
+// this file, bash has no analysis-scoping config file of its own to use as
+// a marker: verified against bash-language-server's own documentation and
+// its CLI source (github.com/bash-lsp/bash-language-server) — its workspace
+// configuration travels over LSP (workspace/configuration) and a
+// BASH_IDE_LOG_LEVEL environment variable, not a root-marker file the way
+// tsconfig.json / pyrightconfig.json / Cargo.toml / pubspec.yaml scope
+// those other resolvers.
+//
+// Rather than invent a marker bash-language-server does not itself
+// recognize, this resolver uses the nearest .git directory as a pragmatic,
+// honest fallback (the closest thing to a universal project-root signal a
+// shell script has) — os.Stat matches it whether it is a directory (an
+// ordinary clone) or a plain file (a git worktree's ".git" pointer file),
+// so FindUp finds it either way. Like every marker resolver except
+// AngularResolver, it still falls back to the script's own directory when
+// no .git is found at all, so a single standalone script is never left
+// unclaimed. See [CResolver]'s doc comment for the DefaultChain wiring
+// note, which applies identically here.
+func BashResolver() MarkerResolver {
+	return MarkerResolver{
+		Language:   "shellscript",
+		Extensions: []string{".sh", ".bash"},
+		Markers:    []string{".git"},
+	}
+}
+
 // DefaultChain returns the resolver chain for every language lspbridge
 // supports out of the box, tried in this order: Python, TypeScript,
 // JavaScript, Rust, Dart, Angular. It is the broker's default
@@ -237,6 +311,10 @@ func AngularResolver() MarkerResolver {
 // above it is not claimed by anything in this chain (there is no
 // plain-HTML language server preset), which is the intended behavior, not
 // a gap.
+//
+// CResolver, CppResolver, and BashResolver (above) are NOT included here —
+// see CResolver's doc comment for why that wiring is out of scope for this
+// set of additions.
 func DefaultChain() Chain {
 	return Chain{
 		PythonResolver(),

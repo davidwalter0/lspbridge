@@ -408,6 +408,175 @@ func TestMarkerResolverRequireMarker(t *testing.T) {
 	}
 }
 
+func TestCResolver(t *testing.T) {
+	root := t.TempDir()
+	cfg := filepath.Join(root, "compile_commands.json")
+	if err := os.WriteFile(cfg, []byte("[]"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srcDir := filepath.Join(root, "src")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, file := range []string{"main.c", "main.h"} {
+		src := filepath.Join(srcDir, file)
+		ctx, ok := CResolver().Resolve(src)
+		if !ok {
+			t.Fatalf("%s: resolver did not claim file", file)
+		}
+		if ctx.Language != "c" {
+			t.Errorf("%s: language = %q, want c", file, ctx.Language)
+		}
+		if ctx.Root != root {
+			t.Errorf("%s: root = %q, want %q", file, ctx.Root, root)
+		}
+		if ctx.ConfigPath != cfg {
+			t.Errorf("%s: config = %q, want %q", file, ctx.ConfigPath, cfg)
+		}
+	}
+	if _, ok := CResolver().Resolve(filepath.Join(srcDir, "main.cpp")); ok {
+		t.Error("CResolver claimed a .cpp file")
+	}
+}
+
+func TestCResolverFallsBackToFileDir(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "lone.c")
+	if err := os.WriteFile(src, []byte("int main(void) { return 0; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, ok := CResolver().Resolve(src)
+	if !ok {
+		t.Fatal("expected resolve even with no compile_commands.json found")
+	}
+	if ctx.Root != dir {
+		t.Errorf("fallback root = %q, want %q", ctx.Root, dir)
+	}
+	if ctx.ConfigPath != "" {
+		t.Errorf("expected empty config, got %q", ctx.ConfigPath)
+	}
+	if _, ok := CResolver().Resolve("/x/a.py"); ok {
+		t.Error("CResolver claimed a .py file")
+	}
+}
+
+func TestCppResolver(t *testing.T) {
+	root := t.TempDir()
+	cfg := filepath.Join(root, "compile_commands.json")
+	if err := os.WriteFile(cfg, []byte("[]"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []string{"a.cc", "a.cpp", "a.cxx", "a.c++", "a.hh", "a.hpp", "a.hxx", "a.h++"}
+	for _, file := range cases {
+		ctx, ok := CppResolver().Resolve(filepath.Join(root, file))
+		if !ok {
+			t.Fatalf("%s: resolver did not claim file", file)
+		}
+		if ctx.Language != "cpp" {
+			t.Errorf("%s: language = %q, want cpp", file, ctx.Language)
+		}
+		if ctx.Root != root {
+			t.Errorf("%s: root = %q, want %q", file, ctx.Root, root)
+		}
+		if ctx.ConfigPath != cfg {
+			t.Errorf("%s: config = %q, want %q", file, ctx.ConfigPath, cfg)
+		}
+	}
+	if _, ok := CppResolver().Resolve(filepath.Join(root, "a.c")); ok {
+		t.Error("CppResolver claimed a .c file")
+	}
+}
+
+// TestCAndCppResolversAreDisjoint guards the split itself: CResolver must
+// never claim a C++-only extension and vice versa, even though both share
+// cMarkers and a project root.
+func TestCAndCppResolversAreDisjoint(t *testing.T) {
+	root := t.TempDir()
+	if _, ok := CResolver().Resolve(filepath.Join(root, "a.hpp")); ok {
+		t.Error("CResolver claimed a .hpp file")
+	}
+	if _, ok := CppResolver().Resolve(filepath.Join(root, "a.h")); ok {
+		t.Error("CppResolver claimed a .h file")
+	}
+}
+
+func TestBashResolver(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scriptsDir := filepath.Join(root, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, file := range []string{"deploy.sh", "lib.bash"} {
+		src := filepath.Join(scriptsDir, file)
+		ctx, ok := BashResolver().Resolve(src)
+		if !ok {
+			t.Fatalf("%s: resolver did not claim file", file)
+		}
+		if ctx.Language != "shellscript" {
+			t.Errorf("%s: language = %q, want shellscript", file, ctx.Language)
+		}
+		if ctx.Root != root {
+			t.Errorf("%s: root = %q, want %q", file, ctx.Root, root)
+		}
+	}
+	if _, ok := BashResolver().Resolve(filepath.Join(scriptsDir, "readme.md")); ok {
+		t.Error("BashResolver claimed a .md file")
+	}
+}
+
+func TestBashResolverFallsBackToFileDir(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "lone.sh")
+	if err := os.WriteFile(src, []byte("#!/bin/sh\necho hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, ok := BashResolver().Resolve(src)
+	if !ok {
+		t.Fatal("expected resolve even with no .git found")
+	}
+	if ctx.Root != dir {
+		t.Errorf("fallback root = %q, want %q", ctx.Root, dir)
+	}
+}
+
+// TestBashResolverMatchesGitWorktreeFile guards the reason this resolver's
+// doc comment gives for choosing .git over some other marker: in a git
+// worktree, ".git" at the worktree root is a FILE (a "gitdir: <path>"
+// pointer), not a directory. FindUp's os.Stat-based check must match either
+// shape identically.
+//
+// The script lives in a NESTED subdirectory (root/nested/deploy.sh), not
+// directly in root: if the file sat in root itself, the fallback-to-own-dir
+// path (when no marker is found at all) would produce the same Root by
+// coincidence, and the assertion below would pass whether or not the .git
+// FILE was actually matched — proving nothing. Nesting the script makes
+// "Root == root" only true when FindUp actually walked up and matched the
+// .git file.
+func TestBashResolverMatchesGitWorktreeFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: /elsewhere\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(root, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(nested, "deploy.sh")
+	ctx, ok := BashResolver().Resolve(src)
+	if !ok {
+		t.Fatal("resolver did not claim file under a worktree-style .git FILE marker")
+	}
+	if ctx.Root != root {
+		t.Errorf("root = %q, want %q", ctx.Root, root)
+	}
+}
+
 func TestDefaultChain(t *testing.T) {
 	chain := DefaultChain()
 	root := t.TempDir()
