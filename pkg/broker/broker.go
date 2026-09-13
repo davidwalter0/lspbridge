@@ -59,6 +59,10 @@ func DefaultSpecFor(pc projectcontext.Context) (server.Spec, error) {
 		return server.DartAnalysisServerSpec(pc.Root)
 	case "html":
 		return server.AngularLanguageServerSpec(pc.Root)
+	case "c", "cpp":
+		return server.ClangdSpec(pc.Root)
+	case "shellscript":
+		return server.BashLanguageServerSpec(pc.Root)
 	default:
 		return server.Spec{}, fmt.Errorf("broker: no language server configured for %q", pc.Language)
 	}

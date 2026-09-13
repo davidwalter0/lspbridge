@@ -323,6 +323,9 @@ func DefaultChain() Chain {
 		RustResolver(),
 		DartResolver(),
 		AngularResolver(),
+		CResolver(),
+		CppResolver(),
+		BashResolver(),
 	}
 }
 
