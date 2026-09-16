@@ -2,3 +2,10 @@
 /coverage.out
 /.worktree/
 node_modules/
+
+# go.work and go.work.sum are PER-CHECKOUT local state -- one per worktree,
+# never committed. go resolves the NEAREST go.work walking upward, so a file at
+# the repo root is found from inside every worktree beneath it, where its `use`
+# set names the PRIMARY checkout rather than the worktree in hand.
+go.work
+go.work.sum
