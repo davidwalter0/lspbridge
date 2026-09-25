@@ -18,28 +18,62 @@
 # running as anyone else. See docs/design/broker-lifecycle-and-socket-path.org
 # for the full deployment story.
 #
-# WHY THE SOCKET PATH IS PASSED EXPLICITLY, NOT LEFT TO THE DEFAULT
+# WHY THE SOCKET PATH IS PASSED EXPLICITLY, NOT LEFT TO THE BARE DEFAULT
 # ------------------------------------------------------------------
 # lspbroker's built-in default is $XDG_RUNTIME_DIR/lspbridge/broker.sock when
 # XDG_RUNTIME_DIR is set, else <TMPDIR-or-/tmp>/lspbridge-<uid>/
 # (pkg/broker.DefaultSocketPath, which falls through to os.TempDir() —
 # itself $TMPDIR-or-"/tmp" — in the empty-XDG_RUNTIME_DIR branch). A
 # systemd --user unit ALWAYS has XDG_RUNTIME_DIR set (systemd exports it to
-# every unit it spawns) — so left to its default, this daemon would bind
-# under /run/user/<uid>/. But the daemon's real consumers (mcp-ast,
-# mcp-agent-editor) are spawned by the mgk MCP gateway under a FILTERED
-# environment with NEITHER XDG_RUNTIME_DIR NOR TMPDIR set (verified live
-# 2026-08-12 against /proc/<mcp-ast-pid>/environ), so they fall through both
-# branches and land on the literal "/tmp" default — a path this daemon was
-# never listening on if left to ITS OWN default. That is a silent mismatch,
-# not a crash: every semantic query just fails as "broker not running" even
-# though it is — see the design doc above for the full trace. So this unit
-# pins the socket to the path the CONSUMER resolves, closing the gap
-# explicitly instead of relying on two processes agreeing on a default they
-# do not share. Do not "simplify" this back to the bare default, and do not
-# reintroduce a $TMPDIR-aware formula on the Makefile side either — the
-# INSTALLING shell's TMPDIR is a different, irrelevant environment (see the
-# Makefile's LSPBROKER_SOCKET comment for the specific bug that produced).
+# every unit it spawns), so left to its own default THIS DAEMON would
+# always bind under $XDG_RUNTIME_DIR/lspbridge/ — but whether that is also
+# where the CONSUMERS (mcp-ast, mcp-agent-editor) will dial depends entirely
+# on what environment the mgk MCP gateway hands them when it spawns them,
+# which is a separate, independently-changing fact this unit cannot assume.
+#
+# RE-MEASURED 2026-09-25 (supersedes the note below, kept as history): both
+# consumers now carry XDG_RUNTIME_DIR=/run/user/<uid> in their real spawn
+# environment (verified live against /proc/<pid>/environ for both), so the
+# consumer's resolution and this daemon's bare default now COINCIDE. The
+# socket is still pinned explicitly rather than left bare, for two reasons
+# that hold independently of whether they currently agree: (1) the exact
+# path a reader should expect to see live is stated right here rather than
+# requiring a trip into pkg/broker to work it out, and (2) `make doctor`
+# (cmd/lspdoctor's consumerSocketPath) independently re-derives what the
+# CONSUMER resolves on every run and will flag a [FAIL] socket-path
+# divergence the moment this pin and that value disagree again — which can
+# only happen by a change in this file's LSPBROKER_SOCKET value or in the
+# consumer's real spawn environment, not silently. The pin is
+# `%t/lspbridge/broker.sock` — see the [Service] section: `%t` is a systemd
+# specifier ("$XDG_RUNTIME_DIR ... for user managers", systemd.unit(5)),
+# expanded by systemd itself at unit load, so it can never disagree with
+# the user manager's own runtime directory and needs no `id -u` shell
+# arithmetic on the Makefile side.
+#
+# IF THE CONSUMER'S ENVIRONMENT DIVERGES FROM XDG_RUNTIME_DIR AGAIN: `%t`
+# stops being correct here (it tracks THIS daemon's XDG_RUNTIME_DIR, not the
+# consumer's actual resolution), and LSPBROKER_SOCKET must go back to naming
+# the consumer's real path explicitly — the same fix applied in 2026-08-12,
+# below. Re-verify against /proc/<consumer-pid>/environ before assuming the
+# fix in either direction still matches reality; see
+# docs/design/broker-lifecycle-and-socket-path.org and 4.11 in the fleet
+# rules ("recorded claims are timestamped hypotheses") for why.
+#
+# SUPERSEDED 2026-08-12 REASONING (history, not current — kept rather than
+# deleted): at that time, both consumers were spawned by the mgk MCP gateway
+# under a FILTERED environment with NEITHER XDG_RUNTIME_DIR NOR TMPDIR set
+# (verified live against /proc/<mcp-ast-pid>/environ), so they fell through
+# both branches of DefaultSocketPath and landed on the literal "/tmp"
+# default — a path this daemon was never listening on if left to its own
+# bare default (which would have bound under /run/user/<uid>/, since
+# systemd always sets XDG_RUNTIME_DIR for units it spawns). That was a
+# silent mismatch, not a crash: every semantic query failed as "broker not
+# running" even though it was up. The socket was therefore pinned to a
+# LITERAL /tmp path at that time, and the Makefile's LSPBROKER_SOCKET
+# comment records the specific $TMPDIR-arithmetic bug found while building
+# that fix. Neither the literal path nor that reasoning is current — see
+# above — but both are kept here as the shape of a divergence this unit
+# must be able to recognize and re-fix if it recurs.
 #
 # WHY A PLAIN ALWAYS-ON SERVICE, NOT SOCKET ACTIVATION
 # ------------------------------------------------------------------

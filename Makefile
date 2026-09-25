@@ -118,32 +118,52 @@ XDG_CONFIG_HOME  ?= $(HOME)/.config
 SYSTEMD_USER_DIR ?= $(XDG_CONFIG_HOME)/systemd/user
 LSPBROKER_EXEC   ?= $(GOBIN)/lspbroker
 
-# The socket path lspbroker's real consumers (mcp-ast, ae) will dial: they
-# are spawned by the mgk MCP gateway under a FILTERED environment that has
-# neither XDG_RUNTIME_DIR nor TMPDIR set — verified live 2026-08-12 by
-# reading /proc/<mcp-ast-pid>/environ (five vars total, PATH among them,
-# neither of these two). So pkg/broker.DefaultSocketPath() falls through
-# BOTH branches in their process and lands on Go's os.TempDir() default of
-# literal "/tmp", never the $XDG_RUNTIME_DIR path a systemd --user unit
-# would pick left to its own default (systemd always sets that var for units
-# it spawns).
+# The socket path lspbroker's real consumers (mcp-ast, mcp-agent-editor)
+# will dial. RE-MEASURED 2026-09-25, superseding the 2026-08-12 note this
+# replaces (kept below as history, not current fact): reading
+# /proc/<pid>/environ live for both consumers (spawned by the mgk MCP
+# gateway) now shows XDG_RUNTIME_DIR=/run/user/<uid> present in BOTH —
+# mgk's spawn environment changed since the original measurement, which
+# found neither XDG_RUNTIME_DIR nor TMPDIR present at all. TMPDIR is still
+# absent from both consumers' environments today, but that no longer
+# matters: pkg/broker.DefaultSocketPath() checks XDG_RUNTIME_DIR first and
+# returns from that branch whenever it is non-empty, so TMPDIR's value (or
+# absence) can't change the answer once XDG_RUNTIME_DIR is set.
 #
-# THIS IS DELIBERATELY A LITERAL "/tmp", NOT "$${TMPDIR:-/tmp}". A first
-# draft of this line used the latter and was wrong on exactly this host: the
-# shell that ran `make install-service` here has TMPDIR=/tmp/user/1001
-# (sandbox-assigned), so "$${TMPDIR:-/tmp}" would have computed
-# /tmp/user/1001/lspbridge-<uid>/... — a path the real, TMPDIR-less consumer
-# never dials. Shell arithmetic over the INSTALLING shell's own environment
-# is the wrong instrument here: it answers "what does the operator's shell
-# resolve", not "what does the filtered consumer resolve", and the two are
-# different questions with the same-looking formula. `make doctor` re-derives
-# this value from the real Go function (cmd/lspdoctor's consumerSocketPath,
-# which unsets both vars before calling pkg/broker.DefaultSocketPath) on
-# every run, so it will flag this line if it is ever wrong again — that is
-# the authoritative, self-reverifying check; this Makefile line is a fast,
-# static mirror of it, not the other way around. Full trace:
-# docs/design/broker-lifecycle-and-socket-path.org.
-LSPBROKER_SOCKET ?= /tmp/lspbridge-$(shell id -u)/broker.sock
+# So the consumer now resolves $XDG_RUNTIME_DIR/lspbridge/broker.sock, and
+# a systemd --user unit's ExecStart can name that value WITHOUT shell
+# arithmetic, via the specifier systemd itself expands at unit-parse time:
+# `%t` is "$XDG_RUNTIME_DIR ... for user managers" (systemd.unit(5), the
+# Specifiers table) — the exact value systemd guarantees for every unit it
+# spawns, uid-agnostic and with no `id -u` substitution needed. That is a
+# stronger match than re-deriving the value in Make: it can never disagree
+# with the systemd manager's own idea of the runtime directory, on this
+# host or any other. `make doctor` re-derives the CONSUMER's value from the
+# real Go function (cmd/lspdoctor's consumerSocketPath, which forces
+# XDG_RUNTIME_DIR to the same uid-derived path before calling
+# pkg/broker.DefaultSocketPath) on every run, so it will flag this line if
+# the two ever disagree again — that is the authoritative, self-reverifying
+# check; this Makefile line is a fast, static mirror of it, not the other
+# way around. Full trace: docs/design/broker-lifecycle-and-socket-path.org.
+#
+# SUPERSEDED 2026-08-12 REASONING (history, not current — kept per the
+# fleet's claims-decay convention rather than deleted):
+# At that time both consumers were verified to carry NEITHER XDG_RUNTIME_DIR
+# NOR TMPDIR (five env vars total, PATH among them, neither of these two),
+# so this line pinned a literal "/tmp" — deliberately NOT
+# "$${TMPDIR:-/tmp}", because a first draft using that formula evaluated
+# $TMPDIR in the INSTALLING shell's own environment (TMPDIR=/tmp/user/1001,
+# sandbox-assigned on this host) rather than the consumer's, and would have
+# computed /tmp/user/1001/lspbridge-<uid>/... — a path the real, TMPDIR-less
+# consumer of THAT era never dialed. Shell arithmetic over the INSTALLING
+# shell's own environment was the wrong instrument then for the same reason
+# it would be wrong now if applied to XDG_RUNTIME_DIR: it answers "what does
+# the operator's shell resolve", not "what does the consumer resolve", and
+# installing from a session that itself lacks XDG_RUNTIME_DIR (a bare SSH
+# login, say) would compute a divergent path all over again. `%t` sidesteps
+# that class of bug entirely: it is expanded by systemd from the ACTUAL user
+# manager's runtime directory, never from the installing shell's.
+LSPBROKER_SOCKET ?= %t/lspbridge/broker.sock
 
 # The PATH lspbroker needs to find the language servers it spawns
 # (pyright-langserver, typescript-language-server, rust-analyzer, dart,
@@ -174,7 +194,9 @@ install-service: bin/lspbroker
 	@echo "  binary : $(GOBIN)/lspbroker"
 	@echo "  unit   : $(SYSTEMD_USER_DIR)/lspbridge.service"
 	@echo "  socket : $(LSPBROKER_SOCKET)"
-	@echo "           (the path mcp-ast/ae will dial — see the unit's own comments for why)"
+	@echo "           (the path mcp-ast/ae will dial — see the unit's own comments for why;"
+	@echo "            the literal %t is expanded by systemd ITSELF at unit load to"
+	@echo "            \$$XDG_RUNTIME_DIR — run \`make doctor\` for the expanded value)"
 	@echo
 	@echo "Next steps (nothing above was started/enabled — run these yourself):"
 	@echo "  1. systemctl --user daemon-reload && systemctl --user enable --now lspbridge.service"

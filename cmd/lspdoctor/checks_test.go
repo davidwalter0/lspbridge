@@ -34,53 +34,47 @@ func TestResultString(t *testing.T) {
 	}
 }
 
-func TestConsumerSocketPathIgnoresXDGRuntimeDir(t *testing.T) {
-	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1234")
+// TestConsumerSocketPathUsesUIDRuntimeDirRegardlessOfAmbientEnv pins the
+// 2026-09-25 re-measurement: both real consumers (mcp-ast,
+// mcp-agent-editor) now carry XDG_RUNTIME_DIR=/run/user/<uid> in their
+// spawn environment (verified live against /proc/<pid>/environ for both),
+// so consumerSocketPath must land on that path — and it must do so by
+// FORCING the uid-derived value, never by trusting whatever the calling
+// process's own ambient XDG_RUNTIME_DIR/TMPDIR happen to be, which is the
+// same "wrong instrument" class of bug the superseded
+// TestConsumerSocketPathIgnoresTMPDIR pinned for the 2026-08-12 behavior
+// (see checks.go's consumerSocketPath doc comment).
+func TestConsumerSocketPathUsesUIDRuntimeDirRegardlessOfAmbientEnv(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1234") // a bogus, unrelated ambient value
+	t.Setenv("TMPDIR", "/tmp/user/1001")          // must not matter once XDG_RUNTIME_DIR is forced
 
 	got := consumerSocketPath()
 
-	if strings.Contains(got, "/run/user/1234") {
-		t.Fatalf("consumerSocketPath must ignore XDG_RUNTIME_DIR, got %q", got)
+	want := fmt.Sprintf("/run/user/%d/lspbridge/broker.sock", os.Getuid())
+	if got != want {
+		t.Fatalf("consumerSocketPath() = %q, want %q", got, want)
 	}
-	if !strings.Contains(got, "lspbridge-") || !strings.HasSuffix(got, "broker.sock") {
-		t.Fatalf("fallback path shape wrong: %q", got)
-	}
-	// consumerSocketPath must restore the env var for the rest of the
-	// process (and this test) — it simulates the consumer's environment,
-	// it does not adopt it.
+}
+
+// TestConsumerSocketPathRestoresAmbientXDGRuntimeDir verifies the override
+// is process-local and does not leak past the call, mirroring the
+// restoration guarantee the superseded unset-based implementation made.
+func TestConsumerSocketPathRestoresAmbientXDGRuntimeDir(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1234")
+
+	_ = consumerSocketPath()
+
 	if v := os.Getenv("XDG_RUNTIME_DIR"); v != "/run/user/1234" {
 		t.Fatalf("XDG_RUNTIME_DIR not restored after the call: %q", v)
 	}
 }
 
-// TestConsumerSocketPathIgnoresTMPDIR pins the exact regression found on
-// this host 2026-08-12: with XDG_RUNTIME_DIR unset (simulating the
-// consumer) but TMPDIR set to something other than "/tmp" (as the
-// developing shell's sandbox does — TMPDIR=/tmp/user/1001), a version of
-// consumerSocketPath that unset only XDG_RUNTIME_DIR computed
-// /tmp/user/1001/lspbridge-<uid>/... instead of /tmp/lspbridge-<uid>/... —
-// the path the real, TMPDIR-less mgk-spawned consumer actually dials
-// (verified against /proc/<mcp-ast-pid>/environ the same day). This test
-// fails under that first-draft behavior and passes under the fix.
-func TestConsumerSocketPathIgnoresTMPDIR(t *testing.T) {
-	t.Setenv("TMPDIR", "/tmp/user/1001")
-	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1001")
-
-	got := consumerSocketPath()
-
-	if strings.Contains(got, "/tmp/user/1001") {
-		t.Fatalf("consumerSocketPath must ignore the CALLER's TMPDIR, got %q", got)
-	}
-	if strings.Contains(got, "/run/user/1001") {
-		t.Fatalf("consumerSocketPath must ignore XDG_RUNTIME_DIR too, got %q", got)
-	}
-	want := "/tmp/lspbridge-" + fmt.Sprint(os.Getuid()) + "/broker.sock"
-	if got != want {
-		t.Fatalf("consumerSocketPath() = %q, want %q (Go's os.TempDir() fallback when TMPDIR is unset)", got, want)
-	}
-}
-
-func TestConsumerSocketPathWhenAlreadyUnset(t *testing.T) {
+// TestConsumerSocketPathWhenAmbientXDGRuntimeDirUnset confirms the forced
+// value and the restore-to-unset path both hold even when the CALLING
+// process happens to have no XDG_RUNTIME_DIR at all (e.g. a bare script
+// with no login-session environment) — doctor's answer must not depend on
+// it either way.
+func TestConsumerSocketPathWhenAmbientXDGRuntimeDirUnset(t *testing.T) {
 	orig, had := os.LookupEnv("XDG_RUNTIME_DIR")
 	_ = os.Unsetenv("XDG_RUNTIME_DIR")
 	defer func() {
@@ -91,11 +85,12 @@ func TestConsumerSocketPathWhenAlreadyUnset(t *testing.T) {
 
 	got := consumerSocketPath()
 
-	if _, stillSet := os.LookupEnv("XDG_RUNTIME_DIR"); stillSet {
-		t.Fatal("XDG_RUNTIME_DIR should remain unset when it started unset")
+	want := fmt.Sprintf("/run/user/%d/lspbridge/broker.sock", os.Getuid())
+	if got != want {
+		t.Fatalf("consumerSocketPath() = %q, want %q", got, want)
 	}
-	if !strings.Contains(got, "lspbridge-") {
-		t.Fatalf("got %q", got)
+	if _, stillSet := os.LookupEnv("XDG_RUNTIME_DIR"); stillSet {
+		t.Fatal("XDG_RUNTIME_DIR should remain unset after the call when it started unset")
 	}
 }
 

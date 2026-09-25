@@ -90,23 +90,43 @@ func checkService() result {
 }
 
 // consumerSocketPath returns the socket path [broker.DefaultSocketPath]
-// would resolve to in an environment with NEITHER XDG_RUNTIME_DIR NOR
-// TMPDIR set — the exact environment mcp-ast/ae see when the mgk MCP
-// gateway spawns them. Verified live 2026-08-12 by reading
-// /proc/<mcp-ast-pid>/environ: the real process carries five env vars total
-// (PATH plus four unrelated to this), neither of these two among them.
+// resolves to in the real consumers' spawn environment: mcp-ast and
+// mcp-agent-editor, both spawned by the mgk MCP gateway.
 //
-// BOTH vars matter, not just XDG_RUNTIME_DIR: DefaultSocketPath falls back
-// to os.TempDir() when XDG_RUNTIME_DIR is empty, and os.TempDir() itself
-// reads $TMPDIR. A first draft of this function unset only XDG_RUNTIME_DIR,
-// which is correct on a host where the CALLING shell's TMPDIR happens to be
-// unset or "/tmp" — and silently wrong on one where it is not. This one
-// reproduces on this very host: the installing shell here runs under
-// TMPDIR=/tmp/user/1001 (sandbox-assigned), which would have made an
-// XDG_RUNTIME_DIR-only fix compute /tmp/user/1001/lspbridge-<uid>/... — a
-// path the real, TMPDIR-less consumer would never dial. The bug would have
-// shipped a unit pinned to a NEW wrong path while looking exactly as
-// deliberate as the fix it was replacing.
+// RE-MEASURED 2026-09-25 (supersedes the 2026-08-12 behavior described
+// below, kept as history): reading /proc/<pid>/environ live for both
+// consumers now shows XDG_RUNTIME_DIR=/run/user/<uid> present in BOTH —
+// mgk's spawn environment changed since the original measurement, which
+// found neither var present at all. TMPDIR is still absent from both
+// consumers' environments today, but that no longer changes the answer:
+// DefaultSocketPath checks XDG_RUNTIME_DIR FIRST and returns from that
+// branch whenever it is non-empty, so TMPDIR is irrelevant once
+// XDG_RUNTIME_DIR is set.
+//
+// This function does NOT read XDG_RUNTIME_DIR from ITS OWN (the doctor
+// process's) ambient environment — doing so would repeat, one variable up,
+// the exact mistake this file's history already records for TMPDIR: an
+// operator running `make doctor` from a session where the login manager
+// never set XDG_RUNTIME_DIR (a bare SSH session with no pam_systemd, say)
+// would make doctor's notion of "the consumer path" depend on the
+// OPERATOR's incidental environment rather than the consumer's real one.
+// Instead it forces XDG_RUNTIME_DIR to the uid-derived value
+// "/run/user/<uid>" directly — not a guess: this is exactly what
+// pam_systemd and the systemd --user manager both set for every login
+// session and every unit they spawn (systemd.unit(5)'s `%t` specifier:
+// "for user managers ... the path $XDG_RUNTIME_DIR resolves to"), and the
+// 2026-09-25 measurement confirms mgk now propagates that same value,
+// unchanged, to the processes it spawns.
+//
+// SUPERSEDED 2026-08-12 behavior (history, not current): at that time the
+// real consumers' spawn environment carried NEITHER XDG_RUNTIME_DIR NOR
+// TMPDIR (verified via /proc/<mcp-ast-pid>/environ — five vars total,
+// neither among them), so this function UNSET both vars to model that
+// filtered environment before delegating to broker.DefaultSocketPath().
+// That environment no longer exists — see above — and reproducing it here
+// today would make doctor disagree with the real consumers rather than
+// agree with them, which is exactly the divergence this tool exists to
+// catch, not manufacture.
 //
 // This delegates to the same function the broker and its consumers actually
 // call rather than re-deriving the fallback formula by hand, so doctor's
@@ -115,33 +135,24 @@ func checkService() result {
 // it is invisible to anything else running in this process or its parent
 // shell.
 func consumerSocketPath() string {
-	restore := unsetForDuration("XDG_RUNTIME_DIR", "TMPDIR")
+	restore := setForDuration("XDG_RUNTIME_DIR", fmt.Sprintf("/run/user/%d", os.Getuid()))
 	defer restore()
 	return broker.DefaultSocketPath()
 }
 
-// unsetForDuration unsets each of names and returns a func that restores
-// whichever were actually set, to their original values. Lets a caller
-// compute what a function reading os.Getenv would resolve to in an
-// environment that never set these vars at all, without assuming its OWN
-// caller already left them unset.
-func unsetForDuration(names ...string) func() {
-	type saved struct {
-		value string
-		had   bool
-	}
-	orig := make(map[string]saved, len(names))
-	for _, n := range names {
-		v, had := os.LookupEnv(n)
-		orig[n] = saved{value: v, had: had}
-		_ = os.Unsetenv(n)
-	}
+// setForDuration sets name to value and returns a func that restores
+// whatever name held before the call (or leaves it unset, if it was unset),
+// so a caller can compute what a function reading os.Getenv would resolve
+// to under a DELIBERATELY CHOSEN value — never the calling process's own
+// ambient one — without leaking the override past the call.
+func setForDuration(name, value string) func() {
+	orig, had := os.LookupEnv(name)
+	_ = os.Setenv(name, value)
 	return func() {
-		for _, n := range names {
-			s := orig[n]
-			if s.had {
-				_ = os.Setenv(n, s.value)
-			}
+		if had {
+			_ = os.Setenv(name, orig)
+		} else {
+			_ = os.Unsetenv(name)
 		}
 	}
 }
