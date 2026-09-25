@@ -29,7 +29,7 @@ const (
 
 	initTimeout     = 60 * time.Second // ceiling for a server's initialize handshake
 	shutdownTimeout = 5 * time.Second  // ceiling for one session's orderly shutdown
-	brokerVersion   = "0.2.0"
+	brokerVersion   = "0.2.1-rc0"
 )
 
 // SpecFunc maps a resolved project [projectcontext.Context] to the
