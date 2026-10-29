@@ -48,6 +48,10 @@ type Conn struct {
 	done     chan struct{}
 
 	handler Handler
+
+	inflight map[string]context.CancelFunc // inbound requests by ID; guarded by mu
+	baseCtx  context.Context
+	baseStop context.CancelFunc
 }
 
 // NewConn creates a Conn over rwc and starts its background read loop. The
@@ -61,7 +65,10 @@ func NewConn(rwc io.ReadWriteCloser, handler Handler) *Conn {
 		pending: make(map[string]chan *Response),
 		done:    make(chan struct{}),
 		handler: handler,
+
+		inflight: make(map[string]context.CancelFunc),
 	}
+	c.baseCtx, c.baseStop = context.WithCancel(context.Background())
 	go c.readLoop()
 	return c
 }
@@ -99,6 +106,11 @@ func (c *Conn) Call(ctx context.Context, method string, params, result any) erro
 
 	select {
 	case <-ctx.Done():
+		// Tell the peer to stop working on it; best effort, off the
+		// caller's path.
+		go func() {
+			_ = c.Notify(context.Background(), "$/cancelRequest", map[string]any{"id": id})
+		}()
 		return ctx.Err()
 	case <-c.done:
 		return c.closeErr
@@ -147,6 +159,12 @@ func (c *Conn) writeMessage(v any) error {
 	return writeFrame(c.w, data)
 }
 
+func (c *Conn) writeRaw(data []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return writeFrame(c.w, data)
+}
+
 func (c *Conn) readLoop() {
 	for {
 		body, err := readFrame(c.r)
@@ -161,7 +179,13 @@ func (c *Conn) readLoop() {
 			Method string `json:"method"`
 		}
 		if err := json.Unmarshal(body, &probe); err != nil {
-			continue // skip undecodable frames rather than tearing down
+			// Skip undecodable frames rather than tearing down; a peer that
+			// can serve requests is told, with the null ID the spec mandates
+			// when the request ID itself could not be read.
+			if c.handler != nil {
+				_ = c.writeRaw([]byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"parse error"}}`))
+			}
+			continue
 		}
 		if probe.Method == "" && probe.ID != nil {
 			var resp Response
@@ -191,15 +215,56 @@ func (c *Conn) deliver(resp *Response) {
 	}
 }
 
+// handleInbound dispatches one inbound message. Notifications run
+// synchronously on the read loop, so they are observed in wire order; each
+// request runs on its own goroutine under a context that $/cancelRequest (or
+// connection close) cancels. A request is therefore NOT ordered against the
+// notifications that follow it.
 func (c *Conn) handleInbound(req *Request) {
-	ctx := context.Background()
 	if req.ID == nil { // notification
+		if req.Method == "$/cancelRequest" {
+			c.cancelInbound(req.Params)
+			return
+		}
 		if c.handler != nil {
-			_, _ = c.handler.Handle(ctx, req)
+			_, _ = c.handler.Handle(c.baseCtx, req)
 		}
 		return
 	}
 
+	ctx, cancel := context.WithCancel(c.baseCtx)
+	key := req.ID.String()
+	c.mu.Lock()
+	c.inflight[key] = cancel
+	c.mu.Unlock()
+
+	go func() {
+		defer func() {
+			c.mu.Lock()
+			delete(c.inflight, key)
+			c.mu.Unlock()
+			cancel()
+		}()
+		c.serveRequest(ctx, req)
+	}()
+}
+
+func (c *Conn) cancelInbound(params json.RawMessage) {
+	var p struct {
+		ID *ID `json:"id"`
+	}
+	if json.Unmarshal(params, &p) != nil || p.ID == nil {
+		return
+	}
+	c.mu.Lock()
+	cancel := c.inflight[p.ID.String()]
+	c.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (c *Conn) serveRequest(ctx context.Context, req *Request) {
 	var (
 		result any
 		err    error
@@ -212,6 +277,10 @@ func (c *Conn) handleInbound(req *Request) {
 
 	resp := &Response{JSONRPC: Version, ID: req.ID}
 	switch {
+	case ctx.Err() != nil && c.baseCtx.Err() == nil:
+		// Canceled by the peer: the spec allows a result, but an error is
+		// the form clients expect and discard.
+		resp.Error = &Error{Code: CodeRequestCancelled, Message: "request cancelled"}
 	case err != nil:
 		var rpcErr *Error
 		if !errors.As(err, &rpcErr) {
@@ -237,6 +306,7 @@ func (c *Conn) fail(err error) {
 	}
 	c.closed = true
 	c.closeErr = err
+	c.baseStop()
 	close(c.done)
 }
 

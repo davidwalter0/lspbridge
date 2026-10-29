@@ -147,3 +147,80 @@ func TestCallContextCancel(t *testing.T) {
 		t.Fatal("expected context error, got nil")
 	}
 }
+
+func TestRequestsRunConcurrently(t *testing.T) {
+	// A slow request must not block a fast one issued after it.
+	release := make(chan struct{})
+	server := HandlerFunc(func(_ context.Context, req *Request) (any, error) {
+		if req.Method == "slow" {
+			<-release
+		}
+		return req.Method, nil
+	})
+	client, _ := pipePair(t, nil, server)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	slowDone := make(chan error, 1)
+	go func() { slowDone <- client.Call(ctx, "slow", nil, nil) }()
+	time.Sleep(50 * time.Millisecond)
+	var got string
+	if err := client.Call(ctx, "fast", nil, &got); err != nil || got != "fast" {
+		t.Fatalf("fast Call = %q, %v", got, err)
+	}
+	close(release)
+	if err := <-slowDone; err != nil {
+		t.Fatalf("slow Call: %v", err)
+	}
+}
+
+func TestCancelRequest(t *testing.T) {
+	started := make(chan struct{})
+	server := HandlerFunc(func(ctx context.Context, _ *Request) (any, error) {
+		close(started)
+		<-ctx.Done()
+		return "late", nil
+	})
+	client, _ := pipePair(t, nil, server)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	errc := make(chan error, 1)
+	go func() { errc <- client.Call(ctx, "hang", nil, nil) }()
+	<-started
+	// Cancel explicitly by ID (the first call on a fresh Conn is ID 1).
+	if err := client.Notify(ctx, "$/cancelRequest", map[string]any{"id": 1}); err != nil {
+		t.Fatal(err)
+	}
+	var rpcErr *Error
+	err := <-errc
+	if !errors.As(err, &rpcErr) || rpcErr.Code != CodeRequestCancelled {
+		t.Fatalf("err = %v, want RequestCancelled", err)
+	}
+}
+
+func TestNotificationsStayOrdered(t *testing.T) {
+	var seq []int
+	done := make(chan struct{})
+	server := HandlerFunc(func(_ context.Context, req *Request) (any, error) {
+		var n int
+		_ = json.Unmarshal(req.Params, &n)
+		seq = append(seq, n)
+		if n == 99 {
+			close(done)
+		}
+		return nil, nil
+	})
+	client, _ := pipePair(t, nil, server)
+	for i := 0; i < 100; i++ {
+		if err := client.Notify(context.Background(), "n", i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	<-done
+	for i, v := range seq {
+		if v != i {
+			t.Fatalf("seq[%d] = %d", i, v)
+		}
+	}
+}
