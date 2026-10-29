@@ -11,5 +11,5 @@ require (
 
 require (
 	github.com/niklasfasching/go-org v1.9.1 // indirect
-	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
 )
