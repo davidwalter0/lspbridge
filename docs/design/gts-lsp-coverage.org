@@ -1,0 +1,433 @@
+#+TITLE: gts-lsp coverage: what real language servers advertise, what gotreesitter covers, and the external validators
+#+DATE: 2026-10-29
+#+STARTUP: showall
+
+* Purpose
+
+gts-lsp serves the syntactic half of LSP from tree-sitter. This note measures
+(1) what six real language servers advertise, so we know which providers a
+tree-sitter-only server cannot match, and (2) what gotreesitter ships per
+grammar, and records (3) the external validators that close the config-file
+gap (yaml, json, toml, Dockerfile, Kubernetes, Helm). Every number below is
+command output from 2026-10-29, not recall; the commands are given.
+
+* Part 1a: server capability matrix
+
+Probe: =/tmp/user/1001/capprobe-keep/probe.py=, run as =python3 -I probe.py=. For
+each server it starts the server under =timeout 60= in its own session against a
+throwaway project (never a real repo), sends =initialize= with a full client
+capabilities object (semanticTokens, foldingRange, selectionRange, hierarchical
+documentSymbol, codeAction literals, rename prepare, publishDiagnostics and
+pull =diagnostic=), saves =InitializeResult.capabilities= to =<server>.json=,
+then =shutdown= / =exit=. Matrix: =python3 -I matrix.py=. Throwaway projects:
+=gopls= (go.mod + main.go), =rust-analyzer= (Cargo.toml + src/main.rs),
+=clangd= (one .c), the rest (a .sh, a .yaml, a .json).
+
+Servers: clangd 14.0.6 (Ubuntu), rust-analyzer 1.93.1 (01f6ddf 2026-02-11),
+gopls v0.24.0, bash-language-server 5.6.0, yaml-language-server 1.12.0 (from its
+package.json; =--version= is not supported), vscode-json-language-server
+(installed; version not recorded).
+
+| provider         | gopls                        | rust-analyzer | clangd                       | bash-language-server         | yaml-language-server         | vscode-json-language-server |
+|------------------+------------------------------+---------------+------------------------------+------------------------------+------------------------------+-----------------------------|
+| hover            | ✓                            | ✓             | ✓                            | ✓                            | ✓                            | ✓                           |
+| completion       | ✓                            | ✓             | ✓                            | ✓                            | ✓                            | ✓                           |
+| signatureHelp    | ✓                            | ✓             | ✓                            | ✗                            | ✗                            | ✗                           |
+| definition       | ✓                            | ✓             | ✓                            | ✓                            | ✓                            | ✗                           |
+| references       | ✓                            | ✓             | ✓                            | ✓                            | ✗                            | ✗                           |
+| implementation   | ✓                            | ✓             | ✓                            | ✗                            | ✗                            | ✗                           |
+| typeDefinition   | ✓                            | ✓             | ✓                            | ✗                            | ✗                            | ✗                           |
+| formatting       | ✓                            | ✓             | ✓                            | ✓                            | ✗                            | ✗                           |
+| rangeFormatting  | ✗                            | ✗             | ✓                            | ✗                            | ✗                            | ✗                           |
+| documentSymbol   | ✓                            | ✓             | ✓                            | ✓                            | ✓                            | ✓                           |
+| foldingRange     | ✓                            | ✓             | ✗                            | ✗                            | ✓                            | ✓                           |
+| selectionRange   | ✓                            | ✓             | ✓                            | ✗                            | ✗                            | ✓                           |
+| semanticTokens   | ✓                            | ✓             | ✓                            | ✗                            | ✗                            | ✗                           |
+| codeAction       | ✓                            | ✓             | ✓                            | ✓                            | ✓                            | ✓                           |
+| rename           | ✓                            | ✓             | ✓                            | ✓                            | ✗                            | ✗                           |
+| diagnostics mode | push (no diagnosticProvider) | pull          | push (no diagnosticProvider) | push (no diagnosticProvider) | push (no diagnosticProvider) | pull                        |
+
+Caveats, measured not assumed:
+- ✓ means the provider value in the =initialize= result was truthy. The yaml and
+  json servers return =documentFormattingProvider: false= and
+  =documentRangeFormattingProvider: false= statically (verified in their saved
+  JSON); formatting there is gated on client settings, so ✗ is "not advertised
+  at initialize", not "never available".
+- gopls advertises no =diagnosticProvider= (push only) although the probe's
+  client declared pull support. rust-analyzer and vscode-json-language-server
+  advertise pull diagnostics.
+- Only the three compiled-language servers offer semanticTokens, implementation
+  and typeDefinition. bash/yaml/json servers have none of these: that is where a
+  tree-sitter server competes directly (folding, selection, symbols, tokens).
+- The probe sends no document, so it measures static capabilities only.
+  Dynamic registrations (=client/registerCapability=) are not captured.
+
+* Part 1b: gotreesitter coverage
+
+Program: =capprobe-keep/gtscov/main.go= (own go.mod; =replace
+github.com/davidwalter0/gotreesitter => /home/david/go/src/github.com/davidwalter0/gotreesitter=,
+the checkout at v0.52.1-dw.3-1-g05549822, one commit past the dw.3 tag).
+Run: =GOFLAGS=-mod=mod GOWORK=off go run . > gtscov.tsv=. For each entry of
+=grammars.AllLanguages()=: extensions, =HighlightQuery= non-empty,
+=ResolveTagsQuery(entry)= non-empty (this includes tags /inferred/ from grammar
+symbols), and =grammars.ParseSupportFor(name)= (backend; quality mapping:
+dfa and token_source = full, dfa-partial = partial, unsupported or unloadable = none).
+
+Counts over 206 registered languages:
+
+|--------------------------------+-----|
+| measure                        | n   |
+|--------------------------------+-----|
+| languages                      | 206 |
+| highlight query present        | 206 |
+| tags query (incl. inferred)    | 84  |
+| no tags query                  | 122 |
+| backend dfa                    | 201 |
+| backend token_source           | 5   |
+| quality full                   | 206 |
+| quality partial / none         | 0   |
+| grammar source ts2go_blob      | 202 |
+| grammar source grammargen_blob | 4   |
+| entries with no extension      | 20  |
+|--------------------------------+-----|
+
+Target languages. Notes: =dockerfile= has no registered extension (detect by
+filename); there is no registry entry named =makefile= (the name is =make=) or
+=terraform= (=hcl= covers .tf). *yaml, json, toml, dockerfile, make and
+markdown have a highlight query but no tags query*, so documentSymbol cannot
+come from a tags query for them and needs a dedicated outline.
+
+| name       | extensions                     | highlight | tags | backend      | quality | source          |
+|------------+--------------------------------+-----------+------+--------------+---------+-----------------|
+| c          | .c .h                          | ✓         | ✓    | token_source | full    | ts2go_blob      |
+| cpp        | .cc .cpp .cxx .hpp .hh .hxx .h | ✓         | ✓    | token_source | full    | ts2go_blob      |
+| rust       | .rs                            | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| go         | .go                            | ✓         | ✓    | dfa          | full    | grammargen_blob |
+| bash       | .sh                            | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| yaml       | .yaml .yml                     | ✓         | ✗    | dfa          | full    | grammargen_blob |
+| json       | .json                          | ✓         | ✗    | token_source | full    | ts2go_blob      |
+| toml       | .toml                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| dockerfile | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| make       | .mk .mak                       | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| markdown   | .md                            | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| hcl        | .hcl .tf .tfvars               | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| python     | .py                            | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| typescript | .ts                            | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+
+Full table: Appendix A.
+
+* Part 2: external validators
+
+Package =gtslsp/validate=, one file per tool, each exec'd under a context
+timeout (30 s default), run with proxy variables pointing at a dead port so an
+accidental fetch fails instead of succeeding. Positions are 0-based line and
+UTF-16 character; Source is the tool name.
+
+|------------------+---------------------------------------------+---------------------------------------------------------------------------+----------------------------------------------------------------------|
+| validator        | applies to                                  | how                                                                       | line mapping                                                         |
+|------------------+---------------------------------------------+---------------------------------------------------------------------------+----------------------------------------------------------------------|
+| yamllint         | yaml                                        | =yamllint -f parsable -= (stdin, doc dir cwd)                             | tool line:col                                                        |
+| check-jsonschema | yaml, json naming a schema                  | =--output-format json --schemafile=                                       | JSON path located in yaml.v3 nodes                                   |
+| kubeconform      | yaml with apiVersion+kind                   | =-strict -output json -ignore-missing-schemas= offline =-schema-location= | JSON pointer located in yaml.v3 nodes                                |
+| helm             | file under templates/ with Chart.yaml above | =helm lint=, =helm template= then kubeconform on the render               | lint/template file:line:col; render errors by key search in template |
+| taplo            | toml                                        | =taplo lint --no-schema --no-auto-config -=                               | parsed from the rendered report                                      |
+| hadolint         | Dockerfile*                                 | =hadolint --format json -=                                                | tool line:column                                                     |
+|------------------+---------------------------------------------+---------------------------------------------------------------------------+----------------------------------------------------------------------|
+
+Offline rule: schemas come from a local path or the cache
+=$XDG_CACHE_HOME/gts-lsp/schemas= (Kubernetes schemas under =k8s/<ver>-standalone-strict/=,
+default version 1.31.0, override =GTS_LSP_K8S_VERSION=). A remote schema not in
+the cache means "skip", never "fetch". =validate.SyncSchemas(ctx, urls)= is
+the only function that touches the network. Unsaved buffers are validated from
+the buffer text (stdin or a temp copy; helm gets a temp copy of the chart with
+the buffer overlaid), never from disk.
+
+Known limits: helm errors whose only location is a /rendered/ line (for
+example "unable to parse YAML ... line 7") are attached to line 0, because
+helm gives no template line for them. A rendered-manifest finding is mapped to
+the template line declaring the same key, preferring a line with a ={{ }}=
+action; when no line declares the key it lands on line 0. Remote =$ref= inside
+a cached schema is not resolved. check-jsonschema is skipped for a document
+whose =$schema= is remote and uncached (for example a JSON Schema draft URL).
+
+** Installed tools
+
+|------------------+---------+---------------------------------------------------+---------------------------------------------------------|
+| tool             | version | how installed                                     | verified                                                |
+|------------------+---------+---------------------------------------------------+---------------------------------------------------------|
+| yamllint         | 1.37.1  | already present (/usr/bin, distro package)        | =yamllint --version=                                    |
+| helm             | v3.21.4 | already present (~/.local/bin)                    | =helm version --short=                                  |
+| kubeconform      | v0.8.0  | GitHub release tarball, extracted to ~/.local/bin | sha256 matches release CHECKSUMS                        |
+| hadolint         | 2.15.1  | GitHub release binary to ~/.local/bin             | sha256 matches checksums.sha256                         |
+| taplo            | 0.10.0  | GitHub release .gz, gunzip to ~/.local/bin        | upstream publishes no checksum; sha256 computed locally |
+| check-jsonschema | 0.39.0  | =pipx install check-jsonschema==0.39.0=           | =check-jsonschema --version=                            |
+|------------------+---------+---------------------------------------------------+---------------------------------------------------------|
+
+exttool declarations: commit 112c68e on branch feat/config-validators
+(=pkg/manifest/validators.go=). exttool's install layer cannot finish three of
+these itself: =KindDownload= saves one file and checks its sha256 but neither
+extracts an archive nor sets the executable bit, and =KindPip= runs a bare
+=pip install=, which an externally-managed Python refuses. So the binaries were
+placed by hand from the same verified downloads, and =exttool resolve= on the
+new build reports all five as present and satisfying their pins.
+
+* Part 3: seeded-error tests
+
+=cd gtslsp && go vet ./validate/... && go test -count=1 ./validate/...=, fixtures in
+=gtslsp/validate/testdata= (a trimmed copy of the Kubernetes Deployment, Service
+and ConfigMap v1.31.0 strict schemas, descriptions stripped, stands in for the
+cache). Each seeded error must land on a named 0-based line:
+
+|--------------------------------------------+------------------------------------------+------|
+| fixture                                    | finding                                  | line |
+|--------------------------------------------+------------------------------------------+------|
+| trailing.yaml                              | yamllint trailing-spaces                 | 2    |
+| port_bad.yaml (modeline, local schema)     | 'eighty' is not of type 'integer'        | 2    |
+| port_bad.json ($schema, local schema)      | same                                     | 1    |
+| deploy_bad.yaml                            | /spec/replicas: got string               | 5    |
+| chartbadvalues/templates/deployment.yaml   | helm nil pointer, .Values.img.repo       | 16   |
+| chartbadmanifest/templates/deployment.yaml | rendered /spec/replicas, via kubeconform | 5    |
+| bad.toml                                   | taplo expected "]"                       | 4    |
+| Dockerfile.bad                             | hadolint DL3007 / DL3008                 | 0, 1 |
+|--------------------------------------------+------------------------------------------+------|
+
+* Part 4: parity with yaml-language-server
+
+=capprobe-keep/parity.py= opens the same files in yaml-language-server 1.12.0 (schema
+through the modeline; the Deployment through a modeline naming the local
+schema file) and collects =publishDiagnostics=. The same files were then run
+through the validators (a throwaway test, removed afterwards). Line numbers are
+0-based; the Deployment copy has the modeline prepended, so its replicas is on line 6.
+
+|-----------------+--------------------------------+--------------------------------------+------------------------------------------+-----------------------------------------------------------------------------------------------|
+| file            | yaml-language-server           | check-jsonschema                     | kubeconform                              | verdict                                                                                       |
+|-----------------+--------------------------------+--------------------------------------+------------------------------------------+-----------------------------------------------------------------------------------------------|
+| port_bad.yaml   | line 2, type integer           | line 2, 'eighty' not integer         | n/a (not a k8s manifest)                 | agree                                                                                         |
+| deploy_bad.yaml | line 6, expected integer, null | line 6, 'three' not 'integer','null' | line 6, got string, want null or integer | agree (3 of 3)                                                                                |
+| trailing.yaml   | none                           | none (no schema)                     | n/a                                      | agree; yamllint adds line 2 trailing spaces, a style rule yaml-language-server does not check |
+|-----------------+--------------------------------+--------------------------------------+------------------------------------------+-----------------------------------------------------------------------------------------------|
+
+Message wording differs between tools; the line and the fact of the error agree
+on every file. The comparison covers one schema violation, one k8s violation and
+one style-only case: it does not show the tools agree on required-property,
+enum or oneOf errors, and the json server was not compared.
+
+* Verification notes
+
+- All matrices and counts are produced by the scripts named above from the saved
+  =InitializeResult= JSON and =gtscov.tsv=; they were not typed by hand.
+- gotreesitter was measured from a local checkout one commit past v0.52.1-dw.3;
+  re-run =gtscov= against the pinned tag before quoting counts for a release.
+- Probe artifacts live in =/tmp/user/1001/capprobe-keep= (a copy of the original
+  scratchpad capprobe directory, taken after the session restart notice).
+
+* Appendix A: all 206 gotreesitter languages
+
+| name              | extensions                     | highlight | tags | backend      | quality | source          |
+|-------------------+--------------------------------+-----------+------+--------------+---------+-----------------|
+| ada               | .adb .ads                      | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| agda              | .agda                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| angular           | (none)                         | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| apex              | .cls .trigger                  | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| arduino           | .ino                           | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| asm               | .s .asm                        | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| astro             | .astro                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| authzed           | .zed                           | ✓         | ✓    | token_source | full    | ts2go_blob      |
+| awk               | .awk                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| bash              | .sh                            | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| bass              | .bass                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| beancount         | .beancount                     | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| bibtex            | .bib                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| bicep             | .bicep                         | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| bitbake           | .bb .bbappend .bbclass         | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| blade             | .blade.php                     | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| brightscript      | .brs                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| c                 | .c .h                          | ✓         | ✓    | token_source | full    | ts2go_blob      |
+| c_sharp           | .cs                            | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| caddy             | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| cairo             | .cairo                         | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| capnp             | .capnp                         | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| chatito           | .chatito                       | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| circom            | .circom                        | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| clojure           | .clj .cljs .cljc .edn          | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| cmake             | .cmake                         | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| cobol             | .cob .cbl .cpy                 | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| comment           | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| commonlisp        | .cl .lisp .lsp                 | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| cooklang          | .cook                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| corn              | .corn                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| cpon              | .cpon                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| cpp               | .cc .cpp .cxx .hpp .hh .hxx .h | ✓         | ✓    | token_source | full    | ts2go_blob      |
+| crystal           | .cr                            | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| css               | .css                           | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| csv               | .csv .tsv                      | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| cuda              | .cu .cuh                       | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| cue               | .cue                           | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| cylc              | .cylc                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| d                 | .d .di                         | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| dart              | .dart                          | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| desktop           | .desktop                       | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| devicetree        | .dts .dtsi                     | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| dhall             | .dhall                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| diff              | .diff .patch                   | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| disassembly       | .dis .dump                     | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| djot              | .djot                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| dockerfile        | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| dot               | .dot .gv                       | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| doxygen           | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| dtd               | .dtd                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| earthfile         | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| ebnf              | .ebnf                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| editorconfig      | .editorconfig                  | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| eds               | .eds                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| eex               | .eex                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| elisp             | .el                            | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| elixir            | .ex .exs                       | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| elm               | .elm                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| elsa              | .elsa                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| embedded_template | .erb .ejs                      | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| enforce           | .enf                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| erlang            | .erl .hrl                      | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| facility          | .fac                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| faust             | .dsp                           | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| fennel            | .fnl                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| fidl              | .fidl                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| firrtl            | .fir                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| fish              | .fish                          | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| foam              | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| forth             | .fs .fth .4th                  | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| fortran           | .f .f90 .f95 .f03 .f08         | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| fsharp            | .fs .fsi .fsx                  | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| gdscript          | .gd                            | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| git_config        | .gitconfig                     | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| git_rebase        | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| gitattributes     | .gitattributes                 | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| gitcommit         | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| gitignore         | .gitignore                     | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| gleam             | .gleam                         | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| glsl              | .glsl .vert .frag              | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| gn                | .gn .gni                       | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| go                | .go                            | ✓         | ✓    | dfa          | full    | grammargen_blob |
+| godot_resource    | .tres .tscn                    | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| gomod             | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| graphql           | .graphql .gql                  | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| groovy            | .groovy .gvy                   | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| hack              | .hack .hh                      | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| hare              | .ha                            | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| haskell           | .hs .lhs                       | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| haxe              | .hx                            | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| hcl               | .hcl .tf .tfvars               | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| heex              | .heex                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| hlsl              | .hlsl .fx                      | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| html              | .html .htm                     | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| http              | .http                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| hurl              | .hurl                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| hyprlang          | .conf                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| ini               | .ini .cfg .conf                | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| janet             | .janet                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| java              | .java                          | ✓         | ✓    | token_source | full    | ts2go_blob      |
+| javascript        | .js .mjs .cjs                  | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| jinja2            | .j2 .jinja2 .jinja             | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| jq                | .jq                            | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| jsdoc             | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| json              | .json                          | ✓         | ✗    | token_source | full    | ts2go_blob      |
+| json5             | .json5                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| jsonnet           | .jsonnet .libsonnet            | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| julia             | .jl                            | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| just              | .just                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| kconfig           | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| kdl               | .kdl                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| kotlin            | .kt .kts                       | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| ledger            | .ledger .journal               | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| less              | .less                          | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| linkerscript      | .ld .lds                       | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| liquid            | .liquid                        | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| llvm              | .ll                            | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| lua               | .lua                           | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| luau              | .luau                          | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| make              | .mk .mak                       | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| markdown          | .md                            | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| markdown_inline   | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| matlab            | .m .mat                        | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| mermaid           | .mmd .mermaid                  | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| meson             | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| mojo              | .mojo .🔥                      | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| move              | .move                          | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| nginx             | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| nickel            | .ncl                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| nim               | .nim .nims                     | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| ninja             | .ninja                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| nix               | .nix                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| norg              | .norg                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| nushell           | .nu                            | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| objc              | .m                             | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| ocaml             | .ml .mli                       | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| odin              | .odin                          | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| org               | .org                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| pascal            | .pas .pp .inc                  | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| pem               | .pem                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| perl              | .pl .pm                        | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| php               | .php                           | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| pkl               | .pkl                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| powershell        | .ps1 .psm1 .psd1               | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| prisma            | .prisma                        | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| prolog            | .pl .pro                       | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| promql            | .promql                        | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| properties        | .properties                    | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| proto             | .proto                         | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| pug               | .pug .jade                     | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| puppet            | .pp                            | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| purescript        | .purs                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| python            | .py                            | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| ql                | .ql                            | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| r                 | .r .R                          | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| racket            | .rkt                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| regex             | .regex                         | ✓         | ✗    | dfa          | full    | grammargen_blob |
+| rego              | .rego                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| requirements      | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| rescript          | .res .resi                     | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| robot             | .robot                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| ron               | .ron                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| rst               | .rst                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| ruby              | .rb                            | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| rust              | .rs                            | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| scala             | .scala                         | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| scheme            | .scm .ss                       | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| scss              | .scss                          | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| smithy            | .smithy                        | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| solidity          | .sol                           | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| sparql            | .rq .sparql                    | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| sql               | .sql                           | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| squirrel          | .nut                           | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| ssh_config        | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| starlark          | .star .bzl                     | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| svelte            | .svelte                        | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| swift             | .swift                         | ✓         | ✓    | dfa          | full    | grammargen_blob |
+| tablegen          | .td                            | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| tcl               | .tcl                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| teal              | .tl                            | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| templ             | .templ                         | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| textproto         | .textproto .txtpb .pbtxt       | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| thrift            | .thrift                        | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| tlaplus           | .tla                           | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| tmux              | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| todotxt           | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| toml              | .toml                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| tsx               | .tsx                           | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| turtle            | .ttl                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| twig              | .twig                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| typescript        | .ts                            | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| typst             | .typ                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| uxntal            | .tal                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| v                 | .v .vsh                        | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| verilog           | .v .sv .svh                    | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| vhdl              | .vhd .vhdl                     | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| vimdoc            | (none)                         | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| vue               | .vue                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| wat               | .wat .wast                     | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| wgsl              | .wgsl                          | ✓         | ✓    | dfa          | full    | ts2go_blob      |
+| wolfram           | .wl .m .nb                     | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| xml               | .xml                           | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| yaml              | .yaml .yml                     | ✓         | ✗    | dfa          | full    | grammargen_blob |
+| yuck              | .yuck                          | ✓         | ✗    | dfa          | full    | ts2go_blob      |
+| zig               | .zig                           | ✓         | ✓    | dfa          | full    | ts2go_blob      |
