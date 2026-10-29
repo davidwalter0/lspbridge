@@ -1,0 +1,6 @@
+name: demo
+items:
+  - a
+  - b
+key: value: oops
+other: ok

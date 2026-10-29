@@ -1,0 +1,16 @@
+# service config
+name: demo
+replicas: 3
+image:
+  repository: example/demo
+  tag: "1.2.3"
+ports:
+  - name: http
+    port: 80
+  - name: metrics
+    port: 9090
+env:
+  LOG_LEVEL: info
+  FEATURES:
+    - alpha
+    - beta

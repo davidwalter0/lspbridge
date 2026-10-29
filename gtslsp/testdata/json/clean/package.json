@@ -1,0 +1,10 @@
+{
+  "name": "demo",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "make",
+    "test": "make test"
+  },
+  "tags": ["a", "b", "😀"],
+  "ok": true
+}
