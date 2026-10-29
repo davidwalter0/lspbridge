@@ -8,6 +8,9 @@
 //
 //	gts-lsp                 serve LSP on stdin/stdout
 //	gts-lsp --capabilities  print JSON: language -> supported features
+//	                        (loads every grammar: seconds)
+//	gts-lsp --languages     print JSON: the registered language names (instant)
+//	gts-lsp --detect PATH   print the language that would claim PATH, exit 1 if none
 //	gts-lsp --version
 package main
 
@@ -27,6 +30,8 @@ import (
 
 func main() {
 	caps := flag.Bool("capabilities", false, "print language -> supported features as JSON and exit")
+	langs := flag.Bool("languages", false, "print the registered language names as JSON and exit")
+	detect := flag.String("detect", "", "print the language that would claim `path` (exit 1 if none) and exit")
 	version := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
@@ -36,6 +41,19 @@ func main() {
 	case *version:
 		fmt.Println("gts-lsp", gts.Version)
 		return
+	case *langs:
+		if err := json.NewEncoder(os.Stdout).Encode(gts.LanguageNames()); err != nil {
+			fmt.Fprintln(os.Stderr, "gts-lsp:", err)
+			os.Exit(1)
+		}
+		return
+	case *detect != "":
+		src, _ := os.ReadFile(*detect) // content sniff (.h as C++); absent file is fine
+		if l := hooks().Detect(*detect, "", src); l != nil {
+			fmt.Println(l.Name)
+			return
+		}
+		os.Exit(1)
 	case *caps:
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")

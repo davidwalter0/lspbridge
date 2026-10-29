@@ -31,7 +31,11 @@
 // a third server.
 package broker
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/davidwalter0/lspbridge/pkg/lsp"
+)
 
 // Wire method names spoken over the broker's unix socket.
 const (
@@ -79,6 +83,12 @@ type SessionStatus struct {
 	IdleSeconds float64 `json:"idleSeconds"`
 	// Inflight is the number of queries currently executing on the session.
 	Inflight int `json:"inflight"`
+	// ServerInfo is the server's self-reported name and version from its
+	// initialize response; absent while the session is still starting.
+	ServerInfo *lsp.ServerInfo `json:"serverInfo,omitempty"`
+	// Capabilities is the server's raw ServerCapabilities object from its
+	// initialize response, verbatim; absent while the session is still starting.
+	Capabilities json.RawMessage `json:"capabilities,omitempty"`
 }
 
 // ShutdownResponse is the broker/shutdown reply.

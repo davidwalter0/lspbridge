@@ -327,3 +327,15 @@ func Capabilities() []Capability {
 	sort.Slice(out, func(i, j int) bool { return out[i].Language < out[j].Language })
 	return out
 }
+
+// LanguageNames lists the registered grammar names, sorted. It does not load
+// any grammar.
+func LanguageNames() []string {
+	all := grammars.AllLanguages()
+	out := make([]string, 0, len(all))
+	for _, e := range all {
+		out = append(out, e.Name)
+	}
+	sort.Strings(out)
+	return out
+}

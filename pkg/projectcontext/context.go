@@ -303,7 +303,7 @@ func BashResolver() MarkerResolver {
 
 // DefaultChain returns the resolver chain for every language lspbridge
 // supports out of the box, tried in this order: Python, TypeScript,
-// JavaScript, Rust, Dart, Angular. It is the broker's default
+// JavaScript, Rust, Dart, Angular, C, C++, Bash. It is the broker's default
 // Config.Resolver. Each resolver claims a disjoint Extensions set, so no
 // file can match more than one — the order only affects readability, not
 // correctness. AngularResolver is the one exception to "extension implies
@@ -312,9 +312,10 @@ func BashResolver() MarkerResolver {
 // plain-HTML language server preset), which is the intended behavior, not
 // a gap.
 //
-// CResolver, CppResolver, and BashResolver (above) are NOT included here —
-// see CResolver's doc comment for why that wiring is out of scope for this
-// set of additions.
+// Every member is a [MarkerResolver] (the broker's defaultspec drift test
+// asserts it), so a catch-all such as [FallbackResolver] is deliberately NOT
+// part of this chain: compose it after it, as Chain{DefaultChain()...,
+// fallback}.
 func DefaultChain() Chain {
 	return Chain{
 		PythonResolver(),
@@ -341,4 +342,55 @@ func (c Chain) Resolve(absPath string) (Context, bool) {
 		}
 	}
 	return Context{}, false
+}
+
+// FallbackResolver claims files that no dedicated resolver handles, for a
+// generic language server that serves many languages (gts-lsp). Whether a
+// file is claimed, and under which languageId, is decided by the injected
+// Detect: this package is zero-dependency and cannot import a grammar
+// registry itself.
+//
+// The project root is the nearest directory above the file holding any of
+// Markers (default: ".git", which matches both a clone's directory and a
+// worktree's pointer file), else the file's own directory, so a loose file is
+// never left unclaimed once Detect accepts it.
+//
+// Place it LAST — Chain{DefaultChain()..., fallback} — so a dedicated
+// resolver always wins.
+type FallbackResolver struct {
+	// Detect returns the languageId for absPath, or false to decline.
+	Detect func(absPath string) (language string, ok bool)
+	// Markers are the root-marker filenames; empty means []string{".git"}.
+	Markers []string
+}
+
+// Resolve implements [Resolver].
+func (f FallbackResolver) Resolve(absPath string) (Context, bool) {
+	if f.Detect == nil {
+		return Context{}, false
+	}
+	lang, ok := f.Detect(absPath)
+	if !ok || lang == "" {
+		return Context{}, false
+	}
+	markers := f.Markers
+	if len(markers) == 0 {
+		markers = []string{".git"}
+	}
+	dir := filepath.Dir(absPath)
+	root, found := FindUp(dir, markers...)
+	if !found {
+		return Context{Root: dir, Language: lang}, true
+	}
+	return Context{Root: root, Language: lang, ConfigPath: filepath.Join(root, markerAt(root, markers))}, true
+}
+
+// markerAt names which of markers exists in dir (the first, if several).
+func markerAt(dir string, markers []string) string {
+	for _, m := range markers {
+		if _, err := os.Stat(filepath.Join(dir, m)); err == nil {
+			return m
+		}
+	}
+	return markers[0]
 }

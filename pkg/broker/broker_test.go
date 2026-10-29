@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -180,6 +181,18 @@ func TestBrokerStatus(t *testing.T) {
 	}
 	if s.Inflight != 0 {
 		t.Fatalf("inflight = %d, want 0 after query returned", s.Inflight)
+	}
+	// The initialize result is retained and exposed: fakelsp advertises
+	// documentSymbolProvider and identifies itself.
+	if s.ServerInfo == nil || s.ServerInfo.Name != "fakelsp" {
+		t.Fatalf("serverInfo = %+v, want fakelsp", s.ServerInfo)
+	}
+	if !strings.Contains(string(s.Capabilities), `"documentSymbolProvider":true`) {
+		t.Fatalf("capabilities = %s", s.Capabilities)
+	}
+	raw, err := json.Marshal(st)
+	if err != nil || !strings.Contains(string(raw), `"capabilities":{`) || !strings.Contains(string(raw), `"serverInfo":{"name":"fakelsp"`) {
+		t.Fatalf("status JSON = %s (%v)", raw, err)
 	}
 }
 

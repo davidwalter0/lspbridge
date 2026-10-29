@@ -1,7 +1,7 @@
 MODULE  := github.com/davidwalter0/lspbridge
 COV_OUT := coverage.out
 
-.PHONY: all build install lint vet vuln vuln-detect vuln-reach test cov cov-html clean check tidy \
+.PHONY: all build install lint vet vuln vuln-detect vuln-reach test cov cov-html clean check check-gtslsp tidy \
         install-service uninstall-service doctor
 
 all: build
@@ -72,7 +72,16 @@ vuln-reach:
 test:
 	go test ./...
 
-check: lint vet vuln test cov
+check: lint vet vuln test cov check-gtslsp
+
+# gtslsp/ is a NESTED module (it carries the gotreesitter dependency the root
+# must stay free of), so ./... above never enters it. It resolves the root's
+# packages (pkg/lspserver, ...) through the checkout's go.work (`use . ./gtslsp`,
+# gitignored, one per worktree, never at the repo root) until the root module is
+# tagged with them. CGO stays off: gotreesitter is pure Go.
+check-gtslsp:
+	@test -f go.work || { echo "check-gtslsp needs a go.work (use . ./gtslsp) in this checkout"; exit 2; }
+	cd gtslsp && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test -count=1 ./... && golangci-lint run ./...
 
 cov:
 	@go test -coverprofile=$(COV_OUT) ./pkg/... 2>&1 | \
@@ -174,7 +183,7 @@ LSPBROKER_SOCKET ?= %t/lspbridge/broker.sock
 # the same shell you'd run `lspbroker` from by hand.
 LSPBROKER_PATH   ?= $(PATH)
 
-bin/lspbroker: cmd/lspbroker/main.go pkg/broker/*.go pkg/lsp/*.go pkg/jsonrpc/*.go pkg/server/*.go pkg/projectcontext/*.go
+bin/lspbroker: cmd/lspbroker/main.go pkg/broker/*.go pkg/lsp/*.go pkg/jsonrpc/*.go pkg/server/*.go pkg/projectcontext/*.go pkg/gtsfallback/*.go
 	@mkdir -p bin
 	go build -o bin/lspbroker ./cmd/lspbroker
 

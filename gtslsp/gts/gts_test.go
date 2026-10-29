@@ -88,7 +88,7 @@ func TestFixtureDiagnostics(t *testing.T) {
 				t.Errorf("%s: bad diagnostic %+v", f, d)
 			}
 		}
-		if st.lang.Name != lang && !(lang == "bash" && st.lang.Name == "bash") {
+		if st.lang.Name != lang {
 			t.Errorf("%s: detected %q", f, st.lang.Name)
 		}
 	}

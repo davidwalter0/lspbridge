@@ -51,7 +51,6 @@ func (s *Server) syntaxDiagnostics(st *docState) []lsp.Diagnostic {
 		return diags
 	}
 	lang := st.lang.lang
-	type frame struct{ n *gotreesitter.Node }
 	stack := []*gotreesitter.Node{root}
 	var found []lsp.Diagnostic
 	for len(stack) > 0 && len(found) < maxSyntaxDiags {
@@ -353,11 +352,6 @@ func wordAt(text []byte, off int) (string, int, int) {
 	return string(text[start:end]), start, end
 }
 
-type namedHit struct {
-	st  *docState
-	tag gotreesitter.Tag
-}
-
 // findTags collects, across every open document with a grammar, the tags
 // named name that satisfy keep. Locks are taken one language at a time.
 func (s *Server) findTags(name string, keep func(kind string) bool) []lsp.Location {
@@ -483,7 +477,7 @@ func (s *Server) completion(uri lsp.DocumentURI, pos lsp.Position) lsp.Completio
 			stack = stack[:len(stack)-1]
 			if n.ChildCount() == 0 {
 				if n.IsNamed() && strings.Contains(n.Type(lang), "identifier") {
-					if txt := n.Text(st.view); wordRE.MatchString(txt) && !(int(n.StartByte()) <= off && off <= int(n.EndByte())) {
+					if txt := n.Text(st.view); wordRE.MatchString(txt) && (off < int(n.StartByte()) || off > int(n.EndByte())) {
 						add(txt, lsp.CompletionItemKindVariable, "identifier (this file)", "2")
 					}
 				}

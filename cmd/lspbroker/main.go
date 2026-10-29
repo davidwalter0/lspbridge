@@ -25,6 +25,7 @@ import (
 	"syscall"
 
 	"github.com/davidwalter0/lspbridge/pkg/broker"
+	"github.com/davidwalter0/lspbridge/pkg/gtsfallback"
 )
 
 func main() {
@@ -43,10 +44,20 @@ func main() {
 		serverStderr = os.Stderr
 	}
 
-	b := broker.New(broker.Config{
+	// gts-lsp is the server of last resort: files no dedicated resolver claims
+	// are offered to it, and it also stands in when a dedicated server's binary
+	// is missing. Absent from PATH, the broker behaves exactly as before.
+	gts := &gtsfallback.Fallback{}
+	cfg := broker.Config{
 		IdleTimeout:  *idle,
 		ServerStderr: serverStderr,
-	})
+	}
+	if gts.Available() {
+		cfg.Resolver = gts.Chain()
+		cfg.SpecFor = gts.SpecFor(broker.DefaultSpecFor)
+		log.Printf("lspbroker: gts-lsp fallback enabled")
+	}
+	b := broker.New(cfg)
 
 	ln, err := broker.Listen(path)
 	if err != nil {

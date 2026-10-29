@@ -642,3 +642,50 @@ func TestDefaultChain(t *testing.T) {
 		t.Error("chain claimed a plain .html file with no Angular workspace above it")
 	}
 }
+
+func TestFallbackResolver(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: x"), 0o644); err != nil { // worktree-style pointer file
+		t.Fatal(err)
+	}
+	sub := filepath.Join(root, "deploy")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f := FallbackResolver{Detect: func(p string) (string, bool) {
+		if filepath.Ext(p) == ".yaml" {
+			return "yaml", true
+		}
+		return "", false
+	}}
+	ctx, ok := f.Resolve(filepath.Join(sub, "values.yaml"))
+	if !ok || ctx.Language != "yaml" || ctx.Root != root || ctx.ConfigPath != filepath.Join(root, ".git") {
+		t.Errorf("ctx = %+v ok=%v", ctx, ok)
+	}
+	if _, ok := f.Resolve(filepath.Join(sub, "a.unknown")); ok {
+		t.Error("declined file was claimed")
+	}
+	// No marker anywhere above: the file's own directory.
+	loose := t.TempDir() // no .git above t.TempDir() unless /tmp is in a repo; use a marker that cannot exist
+	f.Markers = []string{"no-such-marker-xyz"}
+	ctx, ok = f.Resolve(filepath.Join(loose, "x.yaml"))
+	if !ok || ctx.Root != loose || ctx.ConfigPath != "" {
+		t.Errorf("loose ctx = %+v ok=%v", ctx, ok)
+	}
+	if _, ok := (FallbackResolver{}).Resolve("/x.yaml"); ok {
+		t.Error("nil Detect must claim nothing")
+	}
+}
+
+func TestFallbackAfterDefaultChainLosesToDedicated(t *testing.T) {
+	dir := t.TempDir()
+	chain := Chain{}
+	chain = append(chain, DefaultChain()...)
+	chain = append(chain, FallbackResolver{Detect: func(string) (string, bool) { return "anything", true }})
+	if ctx, _ := chain.Resolve(filepath.Join(dir, "a.py")); ctx.Language != "python" {
+		t.Errorf("a.py resolved to %q, the dedicated resolver must win", ctx.Language)
+	}
+	if ctx, _ := chain.Resolve(filepath.Join(dir, "a.zzz")); ctx.Language != "anything" {
+		t.Errorf("a.zzz resolved to %q, want the fallback", ctx.Language)
+	}
+}

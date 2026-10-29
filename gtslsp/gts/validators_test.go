@@ -51,7 +51,7 @@ func TestValidatorsMergeDebounceAndUnavailableHint(t *testing.T) {
 		}
 		return nil, nil
 	}))
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	go lspserver.Serve(context.Background(), ss, srv.Options())
 
 	ctx := context.Background()

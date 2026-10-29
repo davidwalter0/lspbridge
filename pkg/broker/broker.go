@@ -120,6 +120,11 @@ type session struct {
 	ready   chan struct{}
 	srv     *server.Server
 	initErr error
+	// initResult is the server's initialize response (its serverInfo and raw
+	// capabilities), published with srv before ready closes and immutable
+	// afterwards. broker/status exposes it so a caller can tell what a warm
+	// session can answer without probing it.
+	initResult *lsp.InitializeResult
 
 	mu       sync.Mutex
 	opened   map[lsp.DocumentURI]int // doc URI → last version synced
@@ -298,10 +303,12 @@ func (b *Broker) startSession(s *session) error {
 	}
 	initCtx, cancel := context.WithTimeout(b.baseCtx, initTimeout)
 	defer cancel()
-	if _, err := srv.Client().Initialize(initCtx, b.initParams(s.pc)); err != nil {
+	res, err := srv.Client().Initialize(initCtx, b.initParams(s.pc))
+	if err != nil {
 		_ = srv.Close()
 		return fmt.Errorf("broker: initialize %s: %w", s.pc.Language, err)
 	}
+	s.initResult = res
 	s.srv = srv
 	return nil
 }
@@ -364,14 +371,25 @@ func (b *Broker) Status() StatusResponse {
 			docs = append(docs, string(uri))
 		}
 		sort.Strings(docs)
-		out.Sessions = append(out.Sessions, SessionStatus{
+		st := SessionStatus{
 			Key:         key,
 			Language:    s.pc.Language,
 			Root:        s.pc.Root,
 			OpenDocs:    docs,
 			IdleSeconds: now.Sub(s.lastUsed).Seconds(),
 			Inflight:    s.inflight,
-		})
+		}
+		// initResult is written before ready closes; a placeholder still
+		// starting has no result yet, and reading it then would race.
+		select {
+		case <-s.ready:
+			if s.initResult != nil {
+				st.ServerInfo = s.initResult.ServerInfo
+				st.Capabilities = s.initResult.Capabilities
+			}
+		default:
+		}
+		out.Sessions = append(out.Sessions, st)
 		s.mu.Unlock()
 	}
 	sort.Slice(out.Sessions, func(i, j int) bool { return out.Sessions[i].Key < out.Sessions[j].Key })
