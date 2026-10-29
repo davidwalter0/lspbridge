@@ -16,13 +16,18 @@ type InitializeParams struct {
 	ClientInfo   *ClientInfo        `json:"clientInfo,omitempty"`
 }
 
-// TextDocumentContentChangeEvent is a full-document content replacement
-// (whole-document sync; the incremental form is added when a server needs it).
+// TextDocumentContentChangeEvent is one content change. With Range nil it
+// replaces the whole document; with Range set it replaces that range (Position
+// characters count in the negotiated encoding, UTF-16 by default). Both new
+// fields are omitempty, so a whole-document change still serializes to exactly
+// {"text": ...} for servers that only understand full sync.
 //
 // TextDocumentContentChangeEvent is hand-written rather than generated
 // (cmd/lspgen/config.go): the metaModel type is
 // TextDocumentContentChangePartial | TextDocumentContentChangeWholeDocument,
-// and lspbridge intentionally models only the whole-document arm.
+// an "or" the generator rejects.
 type TextDocumentContentChangeEvent struct {
-	Text string `json:"text"`
+	Range       *Range  `json:"range,omitempty"`
+	RangeLength *uint32 `json:"rangeLength,omitempty"` // deprecated by the spec; kept for old clients
+	Text        string  `json:"text"`
 }

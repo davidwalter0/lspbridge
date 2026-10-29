@@ -112,6 +112,27 @@ var enumConfigs = []enumConfig{
 		constDoc: "LSP symbol tags.",
 	},
 	{
+		name:     "TextDocumentSyncKind",
+		doc:      "TextDocumentSyncKind says how the client syncs document changes to a server:\nNone, Full (whole document per change) or Incremental (ranged edits).",
+		constDoc: "Text document sync kinds.",
+	},
+	{
+		name:     "MessageType",
+		doc:      "MessageType is the window/showMessage severity.",
+		constDoc: "Message types.",
+	},
+	{
+		name:     "CompletionItemKind",
+		doc:      "CompletionItemKind classifies a completion item.",
+		constDoc: "Completion item kinds.",
+	},
+	{
+		name: "PositionEncodingKind",
+		doc: "PositionEncodingKind names how Position.Character is counted. An open string\n" +
+			"enumeration; UTF-16 is the mandatory default every server must support.",
+		constDoc: "Standardized position encodings.",
+	},
+	{
 		name: "FoldingRangeKind",
 		doc: "FoldingRangeKind categorizes a FoldingRange (e.g. so a client's \"fold\n" +
 			"all comments\" command can select just that kind). Per the LSP spec it is\n" +
@@ -262,6 +283,55 @@ var structConfigs = []structConfig{
 	{
 		name: "DocumentSymbolParams",
 		doc:  "DocumentSymbolParams is the textDocument/documentSymbol request payload.",
+	},
+
+	// --- Semantic tokens, selection ranges, completion, text sync -------------
+	{
+		name: "SemanticTokensLegend",
+		doc:  "SemanticTokensLegend maps the integer token types and modifier bits used in\nSemanticTokens.Data back to names.",
+	},
+	{
+		name: "SemanticTokensParams",
+		doc:  "SemanticTokensParams is the textDocument/semanticTokens/full request payload.",
+	},
+	{
+		name: "SemanticTokens",
+		doc:  "SemanticTokens is the delta-encoded result of textDocument/semanticTokens/full:\nfive integers per token (deltaLine, deltaStart, length, tokenType, modifiers).",
+	},
+	{
+		name: "SelectionRangeParams",
+		doc:  "SelectionRangeParams is the textDocument/selectionRange request payload.",
+	},
+	{
+		name: "SelectionRange",
+		doc:  "SelectionRange is one range in a chain of ever-larger enclosing ranges.",
+	},
+	{
+		name:       "CompletionParams",
+		doc:        "CompletionParams is the textDocument/completion request payload (the trigger\ncontext is not modeled).",
+		onlyFields: []string{"textDocument", "position"},
+	},
+	{
+		name:       "CompletionItem",
+		doc:        "CompletionItem is one completion candidate, reduced to the plain-text subset.",
+		onlyFields: []string{"label", "kind", "detail", "sortText", "insertText"},
+	},
+	{
+		name:       "CompletionList",
+		doc:        "CompletionList is the completion result; IsIncomplete asks the client to\nre-request as the user types.",
+		onlyFields: []string{"isIncomplete", "items"},
+	},
+	{
+		name: "DidCloseTextDocumentParams",
+		doc:  "DidCloseTextDocumentParams is the textDocument/didClose payload.",
+	},
+	{
+		name: "DidSaveTextDocumentParams",
+		doc:  "DidSaveTextDocumentParams is the textDocument/didSave payload.",
+	},
+	{
+		name: "ShowMessageParams",
+		doc:  "ShowMessageParams is the window/showMessage payload.",
 	},
 
 	// --- Lifecycle / text sync -------------------------------------------------

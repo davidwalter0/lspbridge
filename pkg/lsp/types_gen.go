@@ -61,6 +61,72 @@ const (
 	SymbolTagDeprecated SymbolTag = 1
 )
 
+// TextDocumentSyncKind says how the client syncs document changes to a server:
+// None, Full (whole document per change) or Incremental (ranged edits).
+type TextDocumentSyncKind int
+
+// Text document sync kinds.
+const (
+	TextDocumentSyncKindNone        TextDocumentSyncKind = 0
+	TextDocumentSyncKindFull        TextDocumentSyncKind = 1
+	TextDocumentSyncKindIncremental TextDocumentSyncKind = 2
+)
+
+// MessageType is the window/showMessage severity.
+type MessageType int
+
+// Message types.
+const (
+	MessageTypeError   MessageType = 1
+	MessageTypeWarning MessageType = 2
+	MessageTypeInfo    MessageType = 3
+	MessageTypeLog     MessageType = 4
+	MessageTypeDebug   MessageType = 5
+)
+
+// CompletionItemKind classifies a completion item.
+type CompletionItemKind int
+
+// Completion item kinds.
+const (
+	CompletionItemKindText          CompletionItemKind = 1
+	CompletionItemKindMethod        CompletionItemKind = 2
+	CompletionItemKindFunction      CompletionItemKind = 3
+	CompletionItemKindConstructor   CompletionItemKind = 4
+	CompletionItemKindField         CompletionItemKind = 5
+	CompletionItemKindVariable      CompletionItemKind = 6
+	CompletionItemKindClass         CompletionItemKind = 7
+	CompletionItemKindInterface     CompletionItemKind = 8
+	CompletionItemKindModule        CompletionItemKind = 9
+	CompletionItemKindProperty      CompletionItemKind = 10
+	CompletionItemKindUnit          CompletionItemKind = 11
+	CompletionItemKindValue         CompletionItemKind = 12
+	CompletionItemKindEnum          CompletionItemKind = 13
+	CompletionItemKindKeyword       CompletionItemKind = 14
+	CompletionItemKindSnippet       CompletionItemKind = 15
+	CompletionItemKindColor         CompletionItemKind = 16
+	CompletionItemKindFile          CompletionItemKind = 17
+	CompletionItemKindReference     CompletionItemKind = 18
+	CompletionItemKindFolder        CompletionItemKind = 19
+	CompletionItemKindEnumMember    CompletionItemKind = 20
+	CompletionItemKindConstant      CompletionItemKind = 21
+	CompletionItemKindStruct        CompletionItemKind = 22
+	CompletionItemKindEvent         CompletionItemKind = 23
+	CompletionItemKindOperator      CompletionItemKind = 24
+	CompletionItemKindTypeParameter CompletionItemKind = 25
+)
+
+// PositionEncodingKind names how Position.Character is counted. An open string
+// enumeration; UTF-16 is the mandatory default every server must support.
+type PositionEncodingKind string
+
+// Standardized position encodings.
+const (
+	PositionEncodingKindUTF8  PositionEncodingKind = "utf-8"
+	PositionEncodingKindUTF16 PositionEncodingKind = "utf-16"
+	PositionEncodingKindUTF32 PositionEncodingKind = "utf-32"
+)
+
 // FoldingRangeKind categorizes a FoldingRange (e.g. so a client's "fold
 // all comments" command can select just that kind). Per the LSP spec it is
 // an open string enumeration — the values below are the standardized ones
@@ -341,6 +407,112 @@ type WorkspaceSymbolParams struct {
 type DocumentSymbolParams struct {
 	// TextDocument is the LSP metaModel "textDocument" property of DocumentSymbolParams.
 	TextDocument TextDocumentIdentifier `json:"textDocument"`
+}
+
+// SemanticTokensLegend maps the integer token types and modifier bits used in
+// SemanticTokens.Data back to names.
+type SemanticTokensLegend struct {
+	// TokenTypes is the LSP metaModel "tokenTypes" property of SemanticTokensLegend.
+	TokenTypes []string `json:"tokenTypes"`
+
+	// TokenModifiers is the LSP metaModel "tokenModifiers" property of SemanticTokensLegend.
+	TokenModifiers []string `json:"tokenModifiers"`
+}
+
+// SemanticTokensParams is the textDocument/semanticTokens/full request payload.
+type SemanticTokensParams struct {
+	// TextDocument is the LSP metaModel "textDocument" property of SemanticTokensParams.
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+}
+
+// SemanticTokens is the delta-encoded result of textDocument/semanticTokens/full:
+// five integers per token (deltaLine, deltaStart, length, tokenType, modifiers).
+type SemanticTokens struct {
+	// ResultID is the LSP metaModel "resultId" property of SemanticTokens.
+	ResultID string `json:"resultId,omitempty"`
+
+	// Data is the LSP metaModel "data" property of SemanticTokens.
+	Data []int `json:"data"`
+}
+
+// SelectionRangeParams is the textDocument/selectionRange request payload.
+type SelectionRangeParams struct {
+	// TextDocument is the LSP metaModel "textDocument" property of SelectionRangeParams.
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+
+	// Positions is the LSP metaModel "positions" property of SelectionRangeParams.
+	Positions []Position `json:"positions"`
+}
+
+// SelectionRange is one range in a chain of ever-larger enclosing ranges.
+type SelectionRange struct {
+	// Range is the LSP metaModel "range" property of SelectionRange.
+	Range Range `json:"range"`
+
+	// Parent is the LSP metaModel "parent" property of SelectionRange.
+	Parent *SelectionRange `json:"parent,omitempty"`
+}
+
+// CompletionParams is the textDocument/completion request payload (the trigger
+// context is not modeled).
+type CompletionParams struct {
+	// TextDocument is the LSP metaModel "textDocument" property of CompletionParams.
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+
+	// Position is the LSP metaModel "position" property of CompletionParams.
+	Position Position `json:"position"`
+}
+
+// CompletionItem is one completion candidate, reduced to the plain-text subset.
+type CompletionItem struct {
+	// Label is the LSP metaModel "label" property of CompletionItem.
+	Label string `json:"label"`
+
+	// Kind is the LSP metaModel "kind" property of CompletionItem.
+	Kind CompletionItemKind `json:"kind,omitempty"`
+
+	// Detail is the LSP metaModel "detail" property of CompletionItem.
+	Detail string `json:"detail,omitempty"`
+
+	// SortText is the LSP metaModel "sortText" property of CompletionItem.
+	SortText string `json:"sortText,omitempty"`
+
+	// InsertText is the LSP metaModel "insertText" property of CompletionItem.
+	InsertText string `json:"insertText,omitempty"`
+}
+
+// CompletionList is the completion result; IsIncomplete asks the client to
+// re-request as the user types.
+type CompletionList struct {
+	// IsIncomplete is the LSP metaModel "isIncomplete" property of CompletionList.
+	IsIncomplete bool `json:"isIncomplete"`
+
+	// Items is the LSP metaModel "items" property of CompletionList.
+	Items []CompletionItem `json:"items"`
+}
+
+// DidCloseTextDocumentParams is the textDocument/didClose payload.
+type DidCloseTextDocumentParams struct {
+	// TextDocument is the LSP metaModel "textDocument" property of DidCloseTextDocumentParams.
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+}
+
+// DidSaveTextDocumentParams is the textDocument/didSave payload.
+type DidSaveTextDocumentParams struct {
+	// TextDocument is the LSP metaModel "textDocument" property of DidSaveTextDocumentParams.
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+
+	// Text is the LSP metaModel "text" property of DidSaveTextDocumentParams.
+	Text string `json:"text,omitempty"`
+}
+
+// ShowMessageParams is the window/showMessage payload.
+type ShowMessageParams struct {
+	// Type is the LSP metaModel "type" property of ShowMessageParams.
+	Type MessageType `json:"type"`
+
+	// Message is the LSP metaModel "message" property of ShowMessageParams.
+	Message string `json:"message"`
 }
 
 // ServerInfo identifies the server.
