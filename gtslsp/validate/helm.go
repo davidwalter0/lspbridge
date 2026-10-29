@@ -56,13 +56,13 @@ func copyChart(src, dst string) error {
 		if err != nil {
 			return err
 		}
-		defer in.Close()
+		defer func() { _ = in.Close() }()
 		out, err := os.Create(filepath.Join(dst, rel))
 		if err != nil {
 			return err
 		}
 		n, err := io.Copy(out, in)
-		out.Close()
+		_ = out.Close()
 		total += n
 		if err == nil && total > maxChartCopy {
 			err = fmt.Errorf("chart larger than %d bytes", maxChartCopy)
@@ -107,7 +107,7 @@ func (Helm) Validate(ctx context.Context, doc Document) ([]lsp.Diagnostic, error
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }()
 	chart := filepath.Join(tmp, filepath.Base(root))
 	if err := os.MkdirAll(chart, 0o755); err != nil {
 		return nil, err
@@ -152,10 +152,10 @@ func (Helm) Validate(ctx context.Context, doc Document) ([]lsp.Diagnostic, error
 			}
 			continue
 		}
-		switch {
-		case where == rel:
+		switch where {
+		case rel:
 			add(helmFinding{sev, 0, 0, msg})
-		case where == "templates/":
+		case "templates/":
 			add(helmFinding{sev, 0, 0, msg}) // directory-level finding, no file named
 		}
 	}
@@ -189,7 +189,7 @@ func (Helm) Validate(ctx context.Context, doc Document) ([]lsp.Diagnostic, error
 	chunks := splitRendered(string(tpl.Stdout))
 	for i, r := range rs {
 		c := matchChunk(chunks, r, i)
-		if c == nil || !(c.source == rel || strings.HasSuffix(c.source, "/"+rel)) {
+		if c == nil || c.source != rel && !strings.HasSuffix(c.source, "/"+rel) {
 			continue
 		}
 		switch r.Status {

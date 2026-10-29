@@ -147,8 +147,105 @@ func TestRemoteUncachedSchemaIsNotFetched(t *testing.T) {
 	doc := Document{Path: filepath.Join(dir, "r.yaml"), Language: "yaml",
 		Text: []byte("# yaml-language-server: $schema=" + srv.URL + "/s.json\nname: 1\n")}
 	ds, err := CheckJSONSchema{}.Validate(context.Background(), doc)
-	if err != nil || len(ds) != 0 || hits != 0 {
-		t.Fatalf("diags=%+v err=%v server hits=%d; want none, nil, 0", ds, err, hits)
+	if err != nil || hits != 0 {
+		t.Fatalf("err=%v server hits=%d; want nil, 0", err, hits)
+	}
+	// ...but never silently: one Information diagnostic names URL and command.
+	if len(ds) != 1 || ds[0].Severity != lsp.SeverityInformation || ds[0].Source != "check-jsonschema" ||
+		ds[0].Range.Start.Line != 0 || !strings.Contains(ds[0].Message, srv.URL+"/s.json") ||
+		!strings.Contains(ds[0].Message, "gts-lsp schemas sync") {
+		t.Fatalf("diags = %+v; want one Information naming the URL and the sync command", ds)
+	}
+}
+
+// An empty cache must yield the Information diagnostic, never nothing.
+func TestKubeconformUncachedIsInformation(t *testing.T) {
+	requireTool(t, Kubeconform{})
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	doc := load(t, "deploy_bad.yaml", "yaml")
+	ds, err := Kubeconform{}.Validate(context.Background(), doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ds) != 1 || ds[0].Severity != lsp.SeverityInformation || ds[0].Source != "kubeconform" ||
+		ds[0].Range.Start.Line != 0 ||
+		!strings.Contains(ds[0].Message, "no cached schema for apps/v1 Deployment (Kubernetes "+k8sVersion()+")") ||
+		!strings.Contains(ds[0].Message, "run: gts-lsp schemas sync") {
+		t.Fatalf("diags = %+v", ds)
+	}
+}
+
+func TestK8sSchemaURLs(t *testing.T) {
+	urls, err := K8sSchemaURLs("1.31.0", []string{"deployment", "Ingress", "ClusterRoleBinding", "HorizontalPodAutoscaler", "Pod", "Gateway=gateway.networking.k8s.io/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := k8sSchemaBase + "/v1.31.0-standalone-strict/"
+	want := []string{"deployment-apps-v1.json", "ingress-networking-v1.json", "clusterrolebinding-rbac-v1.json",
+		"horizontalpodautoscaler-autoscaling-v2.json", "pod-v1.json", "gateway-gateway-v1.json"}
+	for i, w := range want {
+		if urls[i] != base+w {
+			t.Errorf("urls[%d] = %s, want %s", i, urls[i], base+w)
+		}
+		// The cache layout must be what runKubeconform's template reads.
+		t.Setenv("XDG_CACHE_HOME", "/c")
+		if got := cachePathForURL(urls[i]); got != "/c/gts-lsp/schemas/k8s/v1.31.0-standalone-strict/"+w {
+			t.Errorf("cache path %s", got)
+		}
+	}
+	if all, _ := K8sSchemaURLs("", nil); len(all) != 19 {
+		t.Errorf("default set has %d kinds, want 19", len(all))
+	}
+	if _, err := K8sSchemaURLs("", []string{"Nope"}); err == nil {
+		t.Error("unknown kind accepted")
+	}
+}
+
+func TestSyncWithReportFailsOnHTTPError(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ok.json" {
+			_, _ = w.Write([]byte("{}"))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	res, err := SyncWithReport(context.Background(), []string{srv.URL + "/ok.json", srv.URL + "/missing.json"})
+	if err == nil || len(res) != 1 || res[0].Bytes != 2 {
+		t.Fatalf("res=%+v err=%v; want 1 success and an error", res, err)
+	}
+}
+
+func TestYamllintDefaultConfig(t *testing.T) {
+	requireTool(t, Yamllint{})
+	t.Setenv("YAMLLINT_CONFIG_FILE", "")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dir := t.TempDir()
+	body := []byte("a: 1\n")
+	if err := os.WriteFile(filepath.Join(dir, "x.yaml"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	doc := Document{Path: filepath.Join(dir, "x.yaml"), Language: "yaml", Text: body}
+	// No project config: relaxed default, no document-start nag.
+	if ds, err := (Yamllint{}).Validate(context.Background(), doc); err != nil || len(ds) != 0 {
+		t.Fatalf("no config: got %+v, %v; want none", ds, err)
+	}
+	// A project's own .yamllint wins: here it re-enables document-start.
+	cfg := "extends: default\nrules:\n  document-start: enable\n"
+	if err := os.WriteFile(filepath.Join(dir, ".yamllint"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ds, err := Yamllint{}.Validate(context.Background(), doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, d := range ds {
+		found = found || d.Code == "document-start"
+	}
+	if !found {
+		t.Fatalf("project .yamllint ignored: %+v", ds)
 	}
 }
 
@@ -160,7 +257,7 @@ func TestSyncSchemasThenValidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(schema) }))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(schema) }))
 	defer srv.Close()
 	url := srv.URL + "/s.json"
 	if err := SyncSchemas(context.Background(), []string{url}); err != nil {

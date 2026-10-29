@@ -142,10 +142,10 @@ func writeTemp(doc Document) (string, func(), error) {
 	}
 	p := filepath.Join(dir, filepath.Base(doc.Path))
 	if err := os.WriteFile(p, doc.Text, 0o600); err != nil {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		return "", nil, err
 	}
-	return p, func() { os.RemoveAll(dir) }, nil
+	return p, func() { _ = os.RemoveAll(dir) }, nil
 }
 
 func isYAML(doc Document) bool {

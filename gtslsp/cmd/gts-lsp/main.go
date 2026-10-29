@@ -12,6 +12,8 @@
 //	gts-lsp --languages     print JSON: the registered language names (instant)
 //	gts-lsp --detect PATH   print the language that would claim PATH, exit 1 if none
 //	gts-lsp --version
+//	gts-lsp schemas sync [--k8s-version V] [--kinds a,b] [URL...]
+//	                        fill the offline schema cache (the ONLY network use)
 package main
 
 import (
@@ -29,6 +31,9 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "schemas" {
+		os.Exit(schemasCmd(os.Args[2:]))
+	}
 	caps := flag.Bool("capabilities", false, "print language -> supported features as JSON and exit")
 	langs := flag.Bool("languages", false, "print the registered language names as JSON and exit")
 	detect := flag.String("detect", "", "print the language that would claim `path` (exit 1 if none) and exit")

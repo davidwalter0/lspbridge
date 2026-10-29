@@ -126,9 +126,9 @@ UTF-16 character; Source is the tool name.
 |------------------+---------------------------------------------+---------------------------------------------------------------------------+----------------------------------------------------------------------|
 | validator        | applies to                                  | how                                                                       | line mapping                                                         |
 |------------------+---------------------------------------------+---------------------------------------------------------------------------+----------------------------------------------------------------------|
-| yamllint         | yaml                                        | =yamllint -f parsable -= (stdin, doc dir cwd)                             | tool line:col                                                        |
+| yamllint         | yaml                                        | =yamllint -f parsable [-d relaxed*] -= (stdin, doc dir cwd)               | tool line:col                                                        |
 | check-jsonschema | yaml, json naming a schema                  | =--output-format json --schemafile=                                       | JSON path located in yaml.v3 nodes                                   |
-| kubeconform      | yaml with apiVersion+kind                   | =-strict -output json -ignore-missing-schemas= offline =-schema-location= | JSON pointer located in yaml.v3 nodes                                |
+| kubeconform      | yaml with apiVersion+kind                   | =-strict -verbose -output json -ignore-missing-schemas= offline =-schema-location= | JSON pointer located in yaml.v3 nodes                                |
 | helm             | file under templates/ with Chart.yaml above | =helm lint=, =helm template= then kubeconform on the render               | lint/template file:line:col; render errors by key search in template |
 | taplo            | toml                                        | =taplo lint --no-schema --no-auto-config -=                               | parsed from the rendered report                                      |
 | hadolint         | Dockerfile*                                 | =hadolint --format json -=                                                | tool line:column                                                     |
@@ -137,8 +137,40 @@ UTF-16 character; Source is the tool name.
 Offline rule: schemas come from a local path or the cache
 =$XDG_CACHE_HOME/gts-lsp/schemas= (Kubernetes schemas under =k8s/<ver>-standalone-strict/=,
 default version 1.31.0, override =GTS_LSP_K8S_VERSION=). A remote schema not in
-the cache means "skip", never "fetch". =validate.SyncSchemas(ctx, urls)= is
-the only function that touches the network. Unsaved buffers are validated from
+the cache means "no fetch while validating", never a silent pass: kubeconform's
+=statusSkipped= (needs =-verbose=, else skipped resources are absent from the
+JSON and the gap is invisible) becomes one Information diagnostic on the
+document's first line, =no cached schema for <apiVersion> <kind> (Kubernetes
+<ver>) -- run: gts-lsp schemas sync=; check-jsonschema does the same for an
+uncached remote =$schema= (naming the URL), and a Warning for a missing local
+schema file. (Measured 2026-10-29: with an empty cache a Deployment with
+=replicas: "three"= showed only yamllint output.)
+
+=gts-lsp schemas sync [--k8s-version V] [--kinds a,b,...] [URL...]= is the only
+code path that touches the network, and is never run implicitly. With no
+arguments it fetches the standalone-strict schema of 19 default kinds
+(Deployment, StatefulSet, DaemonSet, Job, CronJob, Service, ConfigMap, Secret,
+Ingress, ServiceAccount, Role, RoleBinding, ClusterRole, ClusterRoleBinding,
+PersistentVolumeClaim, HorizontalPodAutoscaler (autoscaling/v2), NetworkPolicy,
+Namespace, Pod) from yannh/kubernetes-json-schema
+(=<ver>-standalone-strict/<kind>[-<group1>]-<version>.json=, group1 = first
+dotted segment of the group -- the naming kubeconform's own default template
+uses), into =k8s/<ver>-standalone-strict/=, which is what =runKubeconform='s
+template reads. =--kinds= accepts default-set names or =Kind=apiVersion= for
+others; bare URLs (e.g. a JSON Schema for check-jsonschema, cached under the
+SHA-256 of the URL) are synced in addition, or alone when no =--kinds= is
+given. It prints each file fetched and exits non-zero if any failed. Run on
+this machine 2026-10-29: 19 schemas, 4509462 bytes (4.3 MiB).
+=validate.SyncSchemas(ctx, urls)= is the underlying function.
+
+yamllint config: when no project config applies (no =.yamllint[.yaml|.yml]=
+in the document's directory or any ancestor, no =YAMLLINT_CONFIG_FILE=, no
+=$XDG_CONFIG_HOME/yamllint/config=) the validator passes
+=-d "{extends: relaxed, rules: {document-start: disable}}"=. Plain yamllint
+demands a leading =---= and 80-column lines, which fire on nearly every
+Kubernetes/Helm file and which yaml-language-server users never see; syntax
+errors, duplicate keys and trailing spaces stay on. A project's own config
+always wins. Unsaved buffers are validated from
 the buffer text (stdin or a temp copy; helm gets a temp copy of the chart with
 the buffer overlaid), never from disk.
 
@@ -147,8 +179,9 @@ example "unable to parse YAML ... line 7") are attached to line 0, because
 helm gives no template line for them. A rendered-manifest finding is mapped to
 the template line declaring the same key, preferring a line with a ={{ }}=
 action; when no line declares the key it lands on line 0. Remote =$ref= inside
-a cached schema is not resolved. check-jsonschema is skipped for a document
-whose =$schema= is remote and uncached (for example a JSON Schema draft URL).
+a cached schema is not resolved. A document whose =$schema= is remote and
+uncached (for example a JSON Schema draft URL) gets the Information diagnostic
+above and is not validated until synced.
 
 ** Installed tools
 

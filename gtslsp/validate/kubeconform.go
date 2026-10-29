@@ -48,19 +48,20 @@ func looksLikeK8s(text []byte) bool {
 }
 
 type kcResource struct {
-	Kind, Name, Status, Msg string
-	ValidationErrors        []struct {
+	Kind, Name, Version, Status, Msg string
+	ValidationErrors                 []struct {
 		Path string `json:"path"`
 		Msg  string `json:"msg"`
 	} `json:"validationErrors"`
 }
 
-// runKubeconform validates multi-document text read on stdin.
+// runKubeconform validates (-verbose: without it skipped resources are
+// omitted from the JSON entirely, which is how the gap stayed invisible) multi-document text read on stdin.
 func runKubeconform(ctx context.Context, dir string, text []byte) ([]kcResource, error) {
 	tmpl := filepath.Join(CacheDir(), "k8s") +
 		"/{{.NormalizedKubernetesVersion}}-standalone{{.StrictSuffix}}/{{.ResourceKind}}{{.KindSuffix}}.json"
 	res, err := runTool(ctx, dir, offlineEnv, text, "kubeconform",
-		"-kubernetes-version", k8sVersion(), "-output", "json", "-strict",
+		"-kubernetes-version", k8sVersion(), "-output", "json", "-strict", "-verbose",
 		"-ignore-missing-schemas", "-schema-location", tmpl, "-")
 	if err != nil {
 		return nil, err
@@ -129,6 +130,17 @@ func (Kubeconform) Validate(ctx context.Context, doc Document) ([]lsp.Diagnostic
 			}
 		case "statusError":
 			out = append(out, mkDiag(lines, docLine(d), 0, lsp.SeverityError, "kubeconform", "", r.Msg))
+		case "statusSkipped":
+			// -ignore-missing-schemas turns "no schema" into a skip; say so
+			// rather than let an unvalidated resource look valid.
+			av := r.Version
+			if av == "" && d != nil {
+				if _, v := mapGet(docRoot(d), "apiVersion"); v != nil {
+					av = v.Value
+				}
+			}
+			out = append(out, mkDiag(lines, docLine(d), 0, lsp.SeverityInformation, "kubeconform", "",
+				fmt.Sprintf("no cached schema for %s %s (Kubernetes %s) \u2014 run: gts-lsp schemas sync", av, r.Kind, k8sVersion())))
 		}
 	}
 	return out, nil

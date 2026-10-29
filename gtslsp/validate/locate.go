@@ -74,7 +74,6 @@ func locate(doc *yaml.Node, segs []string) (line, col int, found bool) {
 			if cur.Alias == nil {
 				return pos.Line - 1, pos.Column - 1, false
 			}
-			cur = cur.Alias
 			return pos.Line - 1, pos.Column - 1, false
 		default:
 			return pos.Line - 1, pos.Column - 1, false

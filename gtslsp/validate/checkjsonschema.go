@@ -23,7 +23,7 @@ type CheckJSONSchema struct{}
 func (CheckJSONSchema) Name() string { return "check-jsonschema" }
 
 func (CheckJSONSchema) Applies(doc Document) bool {
-	if !(isYAML(doc) || isJSON(doc)) || isHelmTemplate(doc) {
+	if !isYAML(doc) && !isJSON(doc) || isHelmTemplate(doc) {
 		return false
 	}
 	_, ok := schemaRef(doc)
@@ -76,6 +76,11 @@ func resolveSchema(ref, docDir string) string {
 	return existing(ref)
 }
 
+func isRemoteRef(ref string) bool {
+	u, err := url.Parse(ref)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https")
+}
+
 func existing(p string) string {
 	if st, err := os.Stat(p); err == nil && !st.IsDir() {
 		return p
@@ -101,7 +106,14 @@ func (CheckJSONSchema) Validate(ctx context.Context, doc Document) ([]lsp.Diagno
 	}
 	schema := resolveSchema(ref, filepath.Dir(doc.Path))
 	if schema == "" {
-		return nil, nil // remote and not cached: never fetch while validating
+		// Never fetch while validating, but never stay silent either.
+		lines := splitLines(doc.Text)
+		if isRemoteRef(ref) {
+			return []lsp.Diagnostic{mkDiag(lines, 0, 0, lsp.SeverityInformation, "check-jsonschema", "",
+				"schema "+ref+" is not cached \u2014 run: gts-lsp schemas sync "+ref)}, nil
+		}
+		return []lsp.Diagnostic{mkDiag(lines, 0, 0, lsp.SeverityWarning, "check-jsonschema", "",
+			"schema file not found: "+ref)}, nil
 	}
 	inst, cleanup, err := writeTemp(doc)
 	if err != nil {
