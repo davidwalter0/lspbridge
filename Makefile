@@ -75,12 +75,12 @@ test:
 check: lint vet vuln test cov check-gtslsp
 
 # gtslsp/ is a NESTED module (it carries the gotreesitter dependency the root
-# must stay free of), so ./... above never enters it. It resolves the root's
-# packages (pkg/lspserver, ...) through the checkout's go.work (`use . ./gtslsp`,
-# gitignored, one per worktree, never at the repo root) until the root module is
-# tagged with them. CGO stays off: gotreesitter is pure Go.
+# must stay free of), so ./... above never enters it. Its go.mod requires a
+# PUBLISHED root (pkg/lspserver landed in v0.3.0-rc0); a checkout's go.work
+# (`use . ./gtslsp`, gitignored, one per worktree, never at the repo root)
+# swaps in the local root while both change together. CGO stays off:
+# gotreesitter is pure Go.
 check-gtslsp:
-	@test -f go.work || { echo "check-gtslsp needs a go.work (use . ./gtslsp) in this checkout"; exit 2; }
 	cd gtslsp && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test -count=1 ./... && golangci-lint run ./...
 
 cov:

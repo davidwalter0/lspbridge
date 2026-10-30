@@ -1,8 +1,14 @@
+github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
 github.com/davidwalter0/gotreesitter v0.52.1-dw.3 h1:V4bJsAK/Ov71qySRYaHlSyvgNMXbJDlw25+FSbrUDLs=
 github.com/davidwalter0/gotreesitter v0.52.1-dw.3/go.mod h1:jSwizpouPKuOKAYU8Da5/VVA/DzCg0XMEUO/1YeTljU=
-github.com/davidwalter0/lspbridge v0.2.1-rc0 h1:RnGRGQ7/BN1zYVsew0vnz82rJUdniRUpresmLG4zebE=
-github.com/davidwalter0/lspbridge v0.2.1-rc0/go.mod h1:f3jELsdNDE9YmnsfyCUa5I9EtBIwDiTyVhlRUMpOORw=
-gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
+github.com/davidwalter0/lspbridge v0.3.0-rc0 h1:ma/PnDN2wRxlqmOSmjWq6U9BqcJYDpmzFFM9wEkRLW4=
+github.com/davidwalter0/lspbridge v0.3.0-rc0/go.mod h1:f3jELsdNDE9YmnsfyCUa5I9EtBIwDiTyVhlRUMpOORw=
+github.com/kr/pretty v0.1.0 h1:L/CwN0zerZDmRFUapSPitk6f+Q3+0za1rQkzVuMiMFI=
+github.com/kr/pretty v0.1.0/go.mod h1:dAy3ld7l9f0ibDNOQOHHMYYIIbhfbHSm3C4ZsoJORNo=
+github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=
+github.com/kr/text v0.2.0/go.mod h1:eLer722TekiGuMkidMxC/pM04lWEeraHUUmBw8l2grE=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
+gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 h1:qIbj1fsPNlZgppZ+VLlY7N33q108Sa+fhmuc+sWQYwY=
+gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
 gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
 gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
