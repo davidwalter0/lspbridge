@@ -76,19 +76,19 @@ dfa and token_source = full, dfa-partial = partial, unsupported or unloadable = 
 Counts over 206 registered languages:
 
 |--------------------------------+-----|
-| measure                        | n   |
+| measure                        |   n |
 |--------------------------------+-----|
 | languages                      | 206 |
 | highlight query present        | 206 |
-| tags query (incl. inferred)    | 84  |
+| tags query (incl. inferred)    |  84 |
 | no tags query                  | 122 |
 | backend dfa                    | 201 |
-| backend token_source           | 5   |
+| backend token_source           |   5 |
 | quality full                   | 206 |
-| quality partial / none         | 0   |
+| quality partial / none         |   0 |
 | grammar source ts2go_blob      | 202 |
-| grammar source grammargen_blob | 4   |
-| entries with no extension      | 20  |
+| grammar source grammargen_blob |   4 |
+| entries with no extension      |  20 |
 |--------------------------------+-----|
 
 Target languages. Notes: =dockerfile= has no registered extension (detect by
@@ -123,16 +123,16 @@ timeout (30 s default), run with proxy variables pointing at a dead port so an
 accidental fetch fails instead of succeeding. Positions are 0-based line and
 UTF-16 character; Source is the tool name.
 
-|------------------+---------------------------------------------+---------------------------------------------------------------------------+----------------------------------------------------------------------|
-| validator        | applies to                                  | how                                                                       | line mapping                                                         |
-|------------------+---------------------------------------------+---------------------------------------------------------------------------+----------------------------------------------------------------------|
-| yamllint         | yaml                                        | =yamllint -f parsable [-d relaxed*] -= (stdin, doc dir cwd)               | tool line:col                                                        |
-| check-jsonschema | yaml, json naming a schema                  | =--output-format json --schemafile=                                       | JSON path located in yaml.v3 nodes                                   |
+|------------------+---------------------------------------------+------------------------------------------------------------------------------------+----------------------------------------------------------------------|
+| validator        | applies to                                  | how                                                                                | line mapping                                                         |
+|------------------+---------------------------------------------+------------------------------------------------------------------------------------+----------------------------------------------------------------------|
+| yamllint         | yaml                                        | =yamllint -f parsable [-d relaxed*] -= (stdin, doc dir cwd)                        | tool line:col                                                        |
+| check-jsonschema | yaml, json naming a schema                  | =--output-format json --schemafile=                                                | JSON path located in yaml.v3 nodes                                   |
 | kubeconform      | yaml with apiVersion+kind                   | =-strict -verbose -output json -ignore-missing-schemas= offline =-schema-location= | JSON pointer located in yaml.v3 nodes                                |
-| helm             | file under templates/ with Chart.yaml above | =helm lint=, =helm template= then kubeconform on the render               | lint/template file:line:col; render errors by key search in template |
-| taplo            | toml                                        | =taplo lint --no-schema --no-auto-config -=                               | parsed from the rendered report                                      |
-| hadolint         | Dockerfile*                                 | =hadolint --format json -=                                                | tool line:column                                                     |
-|------------------+---------------------------------------------+---------------------------------------------------------------------------+----------------------------------------------------------------------|
+| helm             | file under templates/ with Chart.yaml above | =helm lint=, =helm template= then kubeconform on the render                        | lint/template file:line:col; render errors by key search in template |
+| taplo            | toml                                        | =taplo lint --no-schema --no-auto-config -=                                        | parsed from the rendered report                                      |
+| hadolint         | Dockerfile*                                 | =hadolint --format json -=                                                         | tool line:column                                                     |
+|------------------+---------------------------------------------+------------------------------------------------------------------------------------+----------------------------------------------------------------------|
 
 Offline rule: schemas come from a local path or the cache
 =$XDG_CACHE_HOME/gts-lsp/schemas= (Kubernetes schemas under =k8s/<ver>-standalone-strict/=,
@@ -188,12 +188,12 @@ above and is not validated until synced.
 |------------------+---------+---------------------------------------------------+---------------------------------------------------------|
 | tool             | version | how installed                                     | verified                                                |
 |------------------+---------+---------------------------------------------------+---------------------------------------------------------|
-| yamllint         | 1.37.1  | already present (/usr/bin, distro package)        | =yamllint --version=                                    |
+| yamllint         |  1.37.1 | already present (/usr/bin, distro package)        | =yamllint --version=                                    |
 | helm             | v3.21.4 | already present (~/.local/bin)                    | =helm version --short=                                  |
-| kubeconform      | v0.8.0  | GitHub release tarball, extracted to ~/.local/bin | sha256 matches release CHECKSUMS                        |
-| hadolint         | 2.15.1  | GitHub release binary to ~/.local/bin             | sha256 matches checksums.sha256                         |
-| taplo            | 0.10.0  | GitHub release .gz, gunzip to ~/.local/bin        | upstream publishes no checksum; sha256 computed locally |
-| check-jsonschema | 0.39.0  | =pipx install check-jsonschema==0.39.0=           | =check-jsonschema --version=                            |
+| kubeconform      |  v0.8.0 | GitHub release tarball, extracted to ~/.local/bin | sha256 matches release CHECKSUMS                        |
+| hadolint         |  2.15.1 | GitHub release binary to ~/.local/bin             | sha256 matches checksums.sha256                         |
+| taplo            |  0.10.0 | GitHub release .gz, gunzip to ~/.local/bin        | upstream publishes no checksum; sha256 computed locally |
+| check-jsonschema |  0.39.0 | =pipx install check-jsonschema==0.39.0=           | =check-jsonschema --version=                            |
 |------------------+---------+---------------------------------------------------+---------------------------------------------------------|
 
 exttool declarations: commit 112c68e on branch feat/config-validators
@@ -214,13 +214,13 @@ cache). Each seeded error must land on a named 0-based line:
 |--------------------------------------------+------------------------------------------+------|
 | fixture                                    | finding                                  | line |
 |--------------------------------------------+------------------------------------------+------|
-| trailing.yaml                              | yamllint trailing-spaces                 | 2    |
-| port_bad.yaml (modeline, local schema)     | 'eighty' is not of type 'integer'        | 2    |
-| port_bad.json ($schema, local schema)      | same                                     | 1    |
-| deploy_bad.yaml                            | /spec/replicas: got string               | 5    |
-| chartbadvalues/templates/deployment.yaml   | helm nil pointer, .Values.img.repo       | 16   |
-| chartbadmanifest/templates/deployment.yaml | rendered /spec/replicas, via kubeconform | 5    |
-| bad.toml                                   | taplo expected "]"                       | 4    |
+| trailing.yaml                              | yamllint trailing-spaces                 |    2 |
+| port_bad.yaml (modeline, local schema)     | 'eighty' is not of type 'integer'        |    2 |
+| port_bad.json ($schema, local schema)      | same                                     |    1 |
+| deploy_bad.yaml                            | /spec/replicas: got string               |    5 |
+| chartbadvalues/templates/deployment.yaml   | helm nil pointer, .Values.img.repo       |   16 |
+| chartbadmanifest/templates/deployment.yaml | rendered /spec/replicas, via kubeconform |    5 |
+| bad.toml                                   | taplo expected "]"                       |    4 |
 | Dockerfile.bad                             | hadolint DL3007 / DL3008                 | 0, 1 |
 |--------------------------------------------+------------------------------------------+------|
 
@@ -244,6 +244,60 @@ Message wording differs between tools; the line and the fact of the error agree
 on every file. The comparison covers one schema violation, one k8s violation and
 one style-only case: it does not show the tools agree on required-property,
 enum or oneOf errors, and the json server was not compared.
+
+* Part 5: head-to-head against the real servers
+
+Four agents drove gts-lsp (lspbridge main 5f2f660's code, binary built from
+3bbf95e; the only later change is hadolint's =Applies=) and a real server over
+stdio on the same opened file sets, 2026-10-29. Ground truth for definition and
+references is the real server. Raw data, drivers and per-case details:
+=/tmp/user/1001/gtscmp/{go,rust,cpp,helm}/= (=results.json=, =results.org=).
+
+| metric                           | Go (gopls v0.24.0)               | Rust (rust-analyzer 1.93.1) | C (clangd 14.0.6)       | C++ (clangd 14.0.6)     | helm (helm-ls v0.5.4)  |
+|----------------------------------+----------------------------------+-----------------------------+-------------------------+-------------------------+------------------------|
+| corpus                           | lspbridge + go-version, 18 files | waypipe-darwin, 15 files    | tree-sitter lib/src, 10 | google/highway hwy/, 10 | 4 charts, 26 templates |
+| symbol precision                 | 1.00                             | 0.91                        | 0.82                    | 0.83                    | 1.00                   |
+| symbol recall (raw)              | 0.60                             | 0.51                        | 0.55                    | 0.25                    | 0.37                   |
+| symbol recall, excl. fields etc. | 0.98                             | 0.96                        | -                       | -                       | ~0.99                  |
+| folding start-line overlap       | 0.81                             | 0.99                        | real n/a                | real n/a                | real n/a               |
+| parse-break hits real / gts      | 44 / 41 of 47                    | 17 / 13 of 17               | 10 / 8 of 12            | 10 / 1 of 12            | 11 / 11 on save        |
+| gts false diagnostics, clean     | 1 (hadolint, fixed)              | 0                           | 12 in 4/10 files        | 15 in 7/10 files        | 1                      |
+| definition gts exact/wrong/none  | 58 / 4 / 78 of 140               | 82 / 2 / 69 of 153          | 44 / 0 / 20 of 64       | 30 / 8 / 66 of 104      | 0 / 16 / 76 of 92      |
+| definition, functions            | 38/38                            | 43/43                       | 24/24                   | 10/24                   | -                      |
+| references mean Jaccard          | 0.30                             | 0.57                        | 0.51                    | 0.11                    | 0 (none returned)      |
+| type errors (seeded)             | real 12/12, gts 0                | real 4/6, gts 0             | real 4/4, gts 0         | real 4/4, gts 0         | -                      |
+| RSS MB real / gts                | 788 / 585                        | 1746 / 430                  | 188 / 182               | 927 / 255               | 295 / 58               |
+
+** Verdicts
+
+- *Go, Rust*: gts-lsp is a credible fallback. Outline, folding, tokens and
+  parse errors are at or near parity, function definition is exact, and it
+  never reported an error on valid code (the one Go false positive was the
+  hadolint routing bug, fixed in 5f2f660). It cannot replace the real server:
+  fields, locals, type references and every type-level diagnostic are out of
+  reach. Follow-ups: lspbridge 47d240bb (Go), 5bfb27f3 (Rust).
+- *C/C++*: not usable as a fallback until 666ea122 is fixed. Valid preprocessor
+  idioms (=extern "C"= guards, braces split across =#if=, member macros,
+  annotation macros) produce false syntax errors, up to a whole-file ERROR that
+  then hides real breaks. C function/macro/typedef definition is exact.
+- *helm*: complement helm-ls, do not replace or defer to it. helm-ls owns
+  navigation, hover and =.Values= completion; gts-lsp adds folding, selection,
+  semantic tokens, standalone-template diagnostics and the
+  =helm template= -> kubeconform stage helm-ls lacks, at a fifth of the memory.
+  Two gts bugs first (silent whole-file blank after a column-0 action in a
+  block scalar; false =missing "}}"= on ={{ f . (g) }}=): 24acdc99.
+
+** Caveats
+
+- The C/C++ =real_resolved= counts (122, 132) exceed =samples= (64, 104):
+  clangd's resolutions were counted over the candidate pool before sampling.
+  The gts exact/wrong/none columns are per sample and sum correctly.
+- Definition samples exclude targets outside the opened set (stdlib, registry
+  crates, system headers), which gts cannot answer by construction; counts of
+  those excluded are in each =results.json= =notes=.
+- Small samples (tens per category); no confidence intervals were computed.
+- rust-analyzer's 0 false errors on clean files needs =procMacro= and
+  =buildScripts= enabled; with them off it reported 30.
 
 * Verification notes
 
