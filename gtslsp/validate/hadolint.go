@@ -19,6 +19,11 @@ func (Hadolint) Applies(doc Document) bool {
 	if doc.Language == "dockerfile" {
 		return true
 	}
+	// The filename fallback is only for a document no grammar claimed: a
+	// dockerfile.go or containerfile_test.go is source, not a Dockerfile.
+	if doc.Language != "" {
+		return false
+	}
 	b := strings.ToLower(filepath.Base(doc.Path))
 	return strings.HasPrefix(b, "dockerfile") || strings.HasPrefix(b, "containerfile") ||
 		strings.HasSuffix(b, ".dockerfile")

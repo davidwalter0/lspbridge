@@ -327,3 +327,21 @@ func TestApplies(t *testing.T) {
 		}
 	}
 }
+
+func TestHadolintAppliesOnlyToDockerfiles(t *testing.T) {
+	for _, c := range []struct {
+		path, lang string
+		want       bool
+	}{
+		{"/p/Dockerfile", "dockerfile", true},
+		{"/p/Dockerfile.dev", "", true},
+		{"/p/app.dockerfile", "", true},
+		{"/p/pkg/scaffold/dockerfile.go", "go", false},
+		{"/p/containerfile_test.go", "go", false},
+		{"/p/Dockerfile.md", "markdown", false},
+	} {
+		if got := (Hadolint{}).Applies(Document{Path: c.path, Language: c.lang}); got != c.want {
+			t.Errorf("Applies(%s, %q) = %v, want %v", c.path, c.lang, got, c.want)
+		}
+	}
+}
